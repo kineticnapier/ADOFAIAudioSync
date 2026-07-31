@@ -86,8 +86,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 CheckpointStartHandshakeRuntime.LastScheduleResidualMs +
                 CheckpointStartHandshakeRuntime.LastPlayheadCorrectionMs;
             string text =
-                "AudioSync v0.9.17  " + (Main.Enabled ? "ON" : "OFF") +
-                "  OGG:" + OggAudioCacheRuntime.LastLookupResult + Environment.NewLine +
+                "AudioSync v0.9.18  " + (Main.Enabled ? "ON" : "OFF") +
+                "  OGG:" + OggAudioCacheRuntime.CurrentUsageState + Environment.NewLine +
                 "Sync " + netSyncMs.ToString("+0.0;-0.0;0.0") +
                 "ms | Drift " +
                 ConductorDriftRuntime.FilteredDriftMs.ToString("+0.0;-0.0;0.0") +
@@ -106,7 +106,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 ? "-"
                 : AudioSyncRuntime.LastError;
             string text =
-                "ADOFAI AudioSync v0.9.17  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
+                "ADOFAI AudioSync v0.9.18  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
                 "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                 "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                 " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +
@@ -131,7 +131,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 "start wait " + CheckpointStartHandshakeRuntime.LastStartDelayMs.ToString("0.0") +
                 "ms / DSP resume " +
                 CheckpointStartHandshakeRuntime.LastDspResumeWaitMs.ToString("0.0") +
-                "ms / sample actual " + CheckpointStartHandshakeRuntime.CurrentSample +
+                "ms / decoder prime " +
+                CheckpointStartHandshakeRuntime.LastDecoderPrimeWaitMs.ToString("0.0") +
+                "ms " +
+                (CheckpointStartHandshakeRuntime.LastDecoderPrimeMoved ? "OK" : "NO-MOVE") +
+                " / sample actual " + CheckpointStartHandshakeRuntime.CurrentSample +
                 " / expected " + CheckpointStartHandshakeRuntime.ExpectedSample +
                 " / seek " + CheckpointStartHandshakeRuntime.RequestedSample +
                 " / stable " + CheckpointStartHandshakeRuntime.ConsecutiveMovingFrames +
@@ -139,11 +143,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 "Countdown: " + CheckpointCountdownRuntime.Status +
                 " / 約" + CheckpointCountdownRuntime.CountdownSeconds.ToString("0.00") + "s" +
                 Environment.NewLine +
-                "OGG cache: " + OggAudioCacheRuntime.Status +
+                "OGG cache: current " + OggAudioCacheRuntime.CurrentUsageState +
+                " / " + OggAudioCacheRuntime.Status +
                 " / " + OggAudioCacheRuntime.EntryCount + "件 " +
                 OggAudioCacheRuntime.EstimatedMegabytes.ToString("0.0") + "MB" +
                 " / hit " + OggAudioCacheRuntime.HitCount +
-                " miss " + OggAudioCacheRuntime.MissCount + Environment.NewLine +
+                " miss " + OggAudioCacheRuntime.MissCount +
+                " / last lookup " + OggAudioCacheRuntime.LastLookupResult +
+                Environment.NewLine +
                 "Drift: " + ConductorDriftRuntime.Status +
                 " / 自動 " + (Main.Settings.AutoCorrectDrift ? "ON" : "OFF") + Environment.NewLine +
                 "raw " + ConductorDriftRuntime.CurrentRawOffsetMs.ToString("+0.0;-0.0;0.0") +

@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
+using System.Globalization;
 using System.Reflection;
+using System.Text;
 using HarmonyLib;
 using UnityEngine;
 
@@ -42,6 +44,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static AudioClip clip;
         private static Coroutine coroutine;
         private static int generation;
+        private static readonly StringBuilder AttemptTrace = new StringBuilder(4096);
 
         private static double requestedLogicalSeconds;
         private static int requestedSample;
@@ -50,11 +53,13 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int stagnantFramesAfterMotion;
         private static double attemptPreparationStartedRealtime;
         private static double attemptStartRealtime;
+        private static double attemptTraceStartedRealtime;
         private static double scheduledStartDsp;
         private static double scheduledPitch;
         private static double scheduledClipSeconds;
         private static double synchronizationCountdownSeconds;
         private static double lastDspResumeWaitMs;
+        private static double lastDecoderPrimeWaitMs;
         private static double lastStartDelayMs;
         private static double lastPlayheadCorrectionMs;
         private static double lastScheduleResidualMs;
@@ -66,6 +71,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int lastRequestedSample;
         private static int lastActualSample;
         private static bool usedTimeSamplesForSeek;
+        private static bool lastDecoderPrimeMoved;
+        private static int lastDecoderPrimeStartSample;
+        private static int lastDecoderPrimeEndSample;
+        private static bool sourceMuteCaptured;
+        private static bool sourceWasMuted;
 
         private static string status = "待機中";
         private static string lastError = string.Empty;
@@ -83,6 +93,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static string Status { get { return status; } }
         internal static string LastError { get { return lastError; } }
         internal static double LastDspResumeWaitMs { get { return lastDspResumeWaitMs; } }
+        internal static double LastDecoderPrimeWaitMs { get { return lastDecoderPrimeWaitMs; } }
+        internal static bool LastDecoderPrimeMoved { get { return lastDecoderPrimeMoved; } }
         internal static double LastStartDelayMs { get { return lastStartDelayMs; } }
         internal static double LastPlayheadCorrectionMs { get { return lastPlayheadCorrectionMs; } }
         internal static double LastScheduleResidualMs { get { return lastScheduleResidualMs; } }
@@ -133,6 +145,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     CheckpointCountdownRuntime
                         .GetAudioSynchronizationCountdownSeconds(instance);
                 lastDspResumeWaitMs = 0d;
+                lastDecoderPrimeWaitMs = 0d;
+                lastDecoderPrimeMoved = false;
+                lastDecoderPrimeStartSample = 0;
+                lastDecoderPrimeEndSample = 0;
                 lastStartDelayMs = 0d;
                 lastPlayheadCorrectionMs = 0d;
                 lastScheduleResidualMs = 0d;
@@ -161,6 +177,13 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 state = HandshakeState.Failed;
                 lastError = ex.GetType().Name + ": " + ex.Message;
                 status = "途中再生予約失敗: 本体Scrubへフォールバック";
+                AppendAttemptTrace("setup exception: " + lastError);
+                LogAttemptFailure(
+                    "checkpoint setup exception: " + ex,
+                    AudioSettings.dspTime,
+                    ReadSampleSafe(source),
+                    requestedSample,
+                    0d);
                 ClearReferences(false);
                 if (Main.Logger != null)
                 {
@@ -191,7 +214,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             if (state == HandshakeState.Priming)
             {
-                status = "途中再生: DSP時計の再開待ち";
                 return;
             }
 
@@ -207,6 +229,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 lastObservedSample = ReadSampleSafe(source);
                 consecutiveMovingFrames = 0;
                 stagnantFramesAfterMotion = 0;
+                AppendAttemptTrace("scheduled start reached");
             }
 
             if (state != HandshakeState.WaitingForStablePlayhead)
@@ -216,7 +239,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             int currentSample = ReadSampleSafe(source);
             int delta = currentSample - lastObservedSample;
-            if (!AudioListener.pause && source.isPlaying && delta > 0)
+            if (!AudioListener.pause && ReadIsPlayingSafe(source) && delta > 0)
             {
                 consecutiveMovingFrames++;
                 stagnantFramesAfterMotion = 0;
@@ -231,6 +254,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 }
             }
             lastObservedSample = currentSample;
+            AppendAttemptTrace(
+                "playhead sample delta=" + delta +
+                " stable=" + consecutiveMovingFrames +
+                "/" + GetRequiredMovingFrames());
 
             int required = GetRequiredMovingFrames();
             status = "途中再生: 開始サンプル確認 " + consecutiveMovingFrames + "/" + required;
@@ -246,23 +273,36 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             double residualMs = SampleDeltaToRealMilliseconds(currentSample - expectedSample, pitch);
             lastExpectedSample = expectedSample;
             lastScheduleResidualMs = residualMs;
+            AppendAttemptTrace(
+                "stable snapshot expected=" +
+                expectedSample.ToString("0.0", CultureInfo.InvariantCulture) +
+                " residualMs=" +
+                residualMs.ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture));
 
             if (Math.Abs(residualMs) > GetMaxScheduleResidualMs())
             {
+                LogAttemptFailure(
+                    "schedule residual exceeded the configured limit",
+                    observedDsp,
+                    currentSample,
+                    expectedSample,
+                    residualMs);
                 if (attemptNumber < GetMaxRetryCount())
                 {
                     retryCount++;
                     attemptNumber++;
                     status = "途中再生: 予約残差 " + FormatSignedMilliseconds(residualMs) +
                              " のため再予約";
-                    if (Main.Logger != null)
+                    try
                     {
-                        Main.Logger.Warning(
-                            "Checkpoint schedule residual was " +
-                            residualMs.ToString("+0.0;-0.0;0.0") +
-                            " ms on attempt " + attemptNumber + "; rescheduling before release.");
+                        BeginScheduledAttempt(true);
                     }
-                    BeginScheduledAttempt(true);
+                    catch (Exception ex)
+                    {
+                        FailAndRelease(
+                            "途中再生の再予約準備に失敗しました: " +
+                            ex.GetType().Name + ": " + ex.Message);
+                    }
                     return;
                 }
 
@@ -297,12 +337,17 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             status = reason ?? "待機中";
             lastError = string.Empty;
             lastDspResumeWaitMs = 0d;
+            lastDecoderPrimeWaitMs = 0d;
+            lastDecoderPrimeMoved = false;
+            lastDecoderPrimeStartSample = 0;
+            lastDecoderPrimeEndSample = 0;
             lastStartDelayMs = 0d;
             lastPlayheadCorrectionMs = 0d;
             lastScheduleResidualMs = 0d;
             lastExpectedSample = 0d;
             consecutiveMovingFrames = 0;
             stagnantFramesAfterMotion = 0;
+            AttemptTrace.Length = 0;
         }
 
         internal static void Shutdown()
@@ -361,11 +406,104 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         yield break;
                     }
 
-                    // Issue one final Stop on the live DSP clock and let it cross at least
-                    // one audio update boundary. This prevents the new reservation from
-                    // sharing the queued voice state that caused v0.9.16's deterministic
-                    // first-attempt advance.
-                    source.Stop();
+                    lastDspResumeWaitMs = Math.Max(
+                        0d,
+                        (Time.realtimeSinceStartupAsDouble - resumeStartedRealtime) *
+                        1000d);
+                    AppendAttemptTrace(
+                        "DSP resumed after " + resumeFrames + " frame(s)");
+
+                    // A compressed OGG can perform its first decoder seek only when the
+                    // AudioSource actually starts. That first seek was the remaining reason
+                    // v0.9.17 could jump several output buffers on attempt 1 while attempt 2
+                    // was stable. Run one muted live start, wait for the decoder head to move,
+                    // then stop and seek again before creating the audible reservation.
+                    double primeStartedRealtime = Time.realtimeSinceStartupAsDouble;
+                    int primeFrames = 0;
+                    int primeMovingSamples = 0;
+                    int primePreviousSample = 0;
+                    try
+                    {
+                        CaptureSourceMute();
+                        source.mute = true;
+                        SeekAttemptToRequestedSample();
+                        lastDecoderPrimeStartSample = ReadSampleSafe(source);
+                        lastDecoderPrimeEndSample = lastDecoderPrimeStartSample;
+                        primePreviousSample = lastDecoderPrimeStartSample;
+                        status = "途中再生: 無音デコード予熱";
+                        source.Play();
+                        AppendAttemptTrace("decoder prime started");
+                    }
+                    catch (Exception ex)
+                    {
+                        RestoreSourceMute();
+                        FailAndRelease(
+                            "途中再生の無音デコード予熱に失敗しました: " +
+                            ex.GetType().Name + ": " + ex.Message);
+                        yield break;
+                    }
+
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           primeFrames < 60 &&
+                           Time.realtimeSinceStartupAsDouble -
+                               primeStartedRealtime < 0.35d)
+                    {
+                        primeFrames++;
+                        yield return null;
+                        lastDecoderPrimeEndSample = ReadSampleSafe(source);
+                        bool primeIsPlaying = ReadIsPlayingSafe(source);
+                        AppendAttemptTrace(
+                            "decoder prime frame=" + primeFrames +
+                            " sample=" + lastDecoderPrimeEndSample +
+                            " playing=" + primeIsPlaying);
+                        if (primeIsPlaying &&
+                            lastDecoderPrimeEndSample != primePreviousSample)
+                        {
+                            primeMovingSamples++;
+                            lastDecoderPrimeMoved = true;
+                            if (primeMovingSamples >= 2)
+                            {
+                                break;
+                            }
+                        }
+                        primePreviousSample = lastDecoderPrimeEndSample;
+                    }
+                    lastDecoderPrimeWaitMs = Math.Max(
+                        0d,
+                        (Time.realtimeSinceStartupAsDouble - primeStartedRealtime) *
+                        1000d);
+                    AppendAttemptTrace(
+                        "decoder prime ended frames=" + primeFrames +
+                        " moves=" + primeMovingSamples +
+                        " moved=" + lastDecoderPrimeMoved +
+                        " start=" + lastDecoderPrimeStartSample +
+                        " end=" + lastDecoderPrimeEndSample);
+
+                    if (!TokenIsCurrent(token) || !IsSessionValid() ||
+                        state != HandshakeState.Priming)
+                    {
+                        RestoreSourceMute();
+                        yield break;
+                    }
+
+                    try
+                    {
+                        source.Stop();
+                    }
+                    catch (Exception ex)
+                    {
+                        RestoreSourceMute();
+                        FailAndRelease(
+                            "途中再生の予熱AudioSource停止に失敗しました: " +
+                            ex.GetType().Name + ": " + ex.Message);
+                        yield break;
+                    }
+                    RestoreSourceMute();
+
+                    // Let the muted prime's Stop command cross an audio update boundary
+                    // before the final seek and PlayScheduled command.
                     double stopDsp = AudioSettings.dspTime;
                     int stopFrames = 0;
                     while (TokenIsCurrent(token) &&
@@ -389,10 +527,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         yield break;
                     }
 
-                    lastDspResumeWaitMs = Math.Max(
-                        0d,
-                        (Time.realtimeSinceStartupAsDouble - resumeStartedRealtime) *
-                        1000d);
+                    AppendAttemptTrace(
+                        "decoder prime stop settled after " + stopFrames + " frame(s)");
                     try
                     {
                         SchedulePreparedAttempt();
@@ -435,16 +571,28 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static void BeginScheduledAttempt(bool retry)
         {
+            attemptTraceStartedRealtime = Time.realtimeSinceStartupAsDouble;
+            AttemptTrace.Length = 0;
+            AppendAttemptTrace(
+                "attempt setup begin retry=" + retry +
+                " requestedLogicalSeconds=" +
+                requestedLogicalSeconds.ToString("0.000000", CultureInfo.InvariantCulture));
+
             if (!IsSessionValid())
             {
                 throw new InvalidOperationException("Checkpoint audio session is no longer valid.");
             }
 
+            RestoreSourceMute();
             AudioListener.pause = true;
             try { source.Stop(); } catch { }
 
             scheduledStartDsp = 0d;
             scheduledPitch = GetPitch();
+            lastDecoderPrimeWaitMs = 0d;
+            lastDecoderPrimeMoved = false;
+            lastDecoderPrimeStartSample = 0;
+            lastDecoderPrimeEndSample = 0;
             SeekAttemptToRequestedSample();
 
             if (!retry || attemptPreparationStartedRealtime <= 0d)
@@ -456,6 +604,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             state = HandshakeState.Priming;
             status = "途中再生: " + (retry ? "再予約" : "予約") +
                      "の停止・シーク反映待ち";
+            AppendAttemptTrace(
+                "attempt priming requestedSample=" + requestedSample);
         }
 
         private static void SeekAttemptToRequestedSample()
@@ -510,8 +660,12 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             double leadMs = GetScheduleLeadMs() + attemptNumber * 250d;
             scheduledStartDsp = AudioSettings.dspTime + leadMs / 1000d;
+            AppendAttemptTrace(
+                "final seek before PlayScheduled leadMs=" +
+                leadMs.ToString("0.0", CultureInfo.InvariantCulture));
             source.PlayScheduled(scheduledStartDsp);
             attemptStartRealtime = Time.realtimeSinceStartupAsDouble;
+            AppendAttemptTrace("PlayScheduled submitted");
 
             lastObservedSample = requestedSample;
             consecutiveMovingFrames = 0;
@@ -566,6 +720,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     ", attempt=" + (attemptNumber + 1) +
                     ", dspResumeWait=" +
                     lastDspResumeWaitMs.ToString("0.0") + " ms" +
+                    ", decoderPrimeWait=" +
+                    lastDecoderPrimeWaitMs.ToString("0.0") + " ms" +
+                    ", decoderPrimeMoved=" + lastDecoderPrimeMoved +
+                    " (" + lastDecoderPrimeStartSample + "->" +
+                    lastDecoderPrimeEndSample + ")" +
                     ", synchronizationCountdown=" +
                     synchronizationCountdownSeconds.ToString("0.000") + " s" +
                     ", playheadCorrection=" +
@@ -585,12 +744,34 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             double observedDsp;
             int currentSample;
             CaptureStablePlayheadSnapshot(out observedDsp, out currentSample);
+            double expectedSample = GetExpectedSampleAtDsp(observedDsp);
+            double residualMs = SampleDeltaToRealMilliseconds(
+                currentSample - expectedSample,
+                GetAttemptPitch());
+            lastExpectedSample = expectedSample;
+            lastScheduleResidualMs = residualMs;
+            AppendAttemptTrace("attempt timed out");
+            LogAttemptFailure(
+                "playhead verification timed out",
+                observedDsp,
+                currentSample,
+                expectedSample,
+                residualMs);
             if (attemptNumber < GetMaxRetryCount())
             {
                 retryCount++;
                 attemptNumber++;
                 status = "途中再生: 開始timeoutのため再予約";
-                BeginScheduledAttempt(true);
+                try
+                {
+                    BeginScheduledAttempt(true);
+                }
+                catch (Exception ex)
+                {
+                    FailAndRelease(
+                        "timeout後の途中再生再予約準備に失敗しました: " +
+                        ex.GetType().Name + ": " + ex.Message);
+                }
                 return;
             }
 
@@ -655,8 +836,15 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static bool IsSessionValid()
         {
-            return conductor != null && source != null && clip != null &&
-                   conductor.song == source && source.clip == clip;
+            try
+            {
+                return conductor != null && source != null && clip != null &&
+                       conductor.song == source && source.clip == clip;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool TokenIsCurrent(int token)
@@ -671,6 +859,20 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static void FailAndRelease(string message)
         {
+            double observedDsp = AudioSettings.dspTime;
+            int currentSample = ReadSampleSafe(source);
+            double expectedSample = GetExpectedSampleAtDsp(observedDsp);
+            double residualMs = SampleDeltaToRealMilliseconds(
+                currentSample - expectedSample,
+                GetAttemptPitch());
+            AppendAttemptTrace("terminal failure: " + (message ?? "(no message)"));
+            LogAttemptFailure(
+                message ?? "checkpoint scheduled start failed",
+                observedDsp,
+                currentSample,
+                expectedSample,
+                residualMs);
+            RestoreSourceMute();
             AudioListener.pause = false;
             state = HandshakeState.Failed;
             lastError = message ?? "checkpoint scheduled start failed";
@@ -685,6 +887,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static void CancelActive(string reason, bool unpause)
         {
             bool wasActive = IsActive;
+            RestoreSourceMute();
             if (coroutine != null && conductor != null)
             {
                 try { conductor.StopCoroutine(coroutine); } catch { }
@@ -708,6 +911,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static void ClearReferences(bool keepErrorState)
         {
+            RestoreSourceMute();
             coroutine = null;
             conductor = null;
             source = null;
@@ -719,6 +923,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             stagnantFramesAfterMotion = 0;
             attemptPreparationStartedRealtime = 0d;
             attemptStartRealtime = 0d;
+            attemptTraceStartedRealtime = 0d;
             scheduledStartDsp = 0d;
             scheduledPitch = 0d;
             scheduledClipSeconds = 0d;
@@ -732,9 +937,387 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
         }
 
+        private static void CaptureSourceMute()
+        {
+            if (sourceMuteCaptured || source == null) return;
+            try
+            {
+                sourceWasMuted = source.mute;
+                sourceMuteCaptured = true;
+            }
+            catch
+            {
+                sourceMuteCaptured = false;
+                sourceWasMuted = false;
+            }
+        }
+
+        private static void RestoreSourceMute()
+        {
+            if (!sourceMuteCaptured) return;
+            try
+            {
+                if (source != null)
+                {
+                    source.mute = sourceWasMuted;
+                }
+            }
+            catch
+            {
+                // The AudioSource can be destroyed during a level transition.
+            }
+            sourceMuteCaptured = false;
+            sourceWasMuted = false;
+        }
+
+        private static void AppendAttemptTrace(string stage)
+        {
+            try
+            {
+                if (AttemptTrace.Length >= 32768) return;
+                double elapsedMs = attemptTraceStartedRealtime <= 0d
+                    ? 0d
+                    : (Time.realtimeSinceStartupAsDouble - attemptTraceStartedRealtime) * 1000d;
+                AttemptTrace
+                    .Append("  +")
+                    .Append(elapsedMs.ToString("0.0", CultureInfo.InvariantCulture))
+                    .Append("ms ")
+                    .Append(stage ?? "(no stage)")
+                    .Append(" | state=")
+                    .Append(state)
+                    .Append(" dsp=")
+                    .Append(AudioSettings.dspTime.ToString("0.000000", CultureInfo.InvariantCulture))
+                    .Append(" scheduled=")
+                    .Append(scheduledStartDsp.ToString("0.000000", CultureInfo.InvariantCulture))
+                    .Append(" sample=")
+                    .Append(ReadSampleSafe(source))
+                    .Append(" time=")
+                    .Append(ReadTimeSafe(source).ToString("0.000000", CultureInfo.InvariantCulture))
+                    .Append(" playing=")
+                    .Append(ReadIsPlayingSafe(source))
+                    .Append(" listenerPause=")
+                    .Append(AudioListener.pause)
+                    .AppendLine();
+            }
+            catch
+            {
+                // Diagnostics must never interfere with playback recovery.
+            }
+        }
+
+        private static void LogAttemptFailure(
+            string reason,
+            double observedDsp,
+            int actualSample,
+            double expectedSample,
+            double residualMs)
+        {
+            if (Main.Logger == null) return;
+            try
+            {
+                Main.Logger.Warning(BuildAttemptFailureDiagnostics(
+                    reason,
+                    observedDsp,
+                    actualSample,
+                    expectedSample,
+                    residualMs));
+            }
+            catch (Exception ex)
+            {
+                Main.Logger.Warning(
+                    "Checkpoint schedule failure diagnostics could not be built: " + ex);
+            }
+        }
+
+        private static string BuildAttemptFailureDiagnostics(
+            string reason,
+            double observedDsp,
+            int actualSample,
+            double expectedSample,
+            double residualMs)
+        {
+            int dspBufferLength = 0;
+            int dspBufferCount = 0;
+            try
+            {
+                AudioSettings.GetDSPBufferSize(
+                    out dspBufferLength,
+                    out dspBufferCount);
+            }
+            catch
+            {
+                dspBufferLength = 0;
+                dspBufferCount = 0;
+            }
+
+            double chartOrigin = double.NaN;
+            try
+            {
+                if (conductor != null && DspTimeSongField != null)
+                {
+                    object value = DspTimeSongField.GetValue(conductor);
+                    if (value is double)
+                    {
+                        chartOrigin = (double)value;
+                    }
+                }
+            }
+            catch
+            {
+                chartOrigin = double.NaN;
+            }
+
+            string conductorDspText = "(null)";
+            try
+            {
+                if (conductor != null)
+                {
+                    conductorDspText = conductor.dspTime.ToString(
+                        "0.000000",
+                        CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                conductorDspText = "(error)";
+            }
+
+            string clipName = "(null)";
+            int clipFrequency = 0;
+            int clipChannels = 0;
+            int clipSamples = 0;
+            string clipLength = "0";
+            try
+            {
+                if (clip != null)
+                {
+                    clipName = clip.name ?? "(unnamed)";
+                    clipFrequency = clip.frequency;
+                    clipChannels = clip.channels;
+                    clipSamples = clip.samples;
+                    clipLength = clip.length.ToString(
+                        "0.000000",
+                        CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                clipName = "(error)";
+                clipFrequency = 0;
+                clipChannels = 0;
+                clipSamples = 0;
+                clipLength = "(error)";
+            }
+
+            string oggCurrent = "(error)";
+            string oggLastLookup = "(error)";
+            string oggStatus = "(error)";
+            int oggEntries = 0;
+            try
+            {
+                oggCurrent = OggAudioCacheRuntime.CurrentUsageState;
+                oggLastLookup = OggAudioCacheRuntime.LastLookupResult;
+                oggEntries = OggAudioCacheRuntime.EntryCount;
+                oggStatus = OggAudioCacheRuntime.Status;
+            }
+            catch
+            {
+                // Preserve the rest of the failure report even if a level transition
+                // races the OGG-state snapshot.
+            }
+
+            StringBuilder builder = new StringBuilder(8192);
+            builder.AppendLine(
+                "=== ADOFAI AudioSync v0.9.18 checkpoint schedule failure ===");
+            builder.Append("reason=").AppendLine(reason ?? "(none)");
+            builder.Append("attempt=")
+                .Append(attemptNumber + 1)
+                .Append("/")
+                .Append(GetMaxRetryCount() + 1)
+                .Append(" state=")
+                .Append(state)
+                .Append(" frame=")
+                .Append(Time.frameCount)
+                .Append(" focused=")
+                .Append(Application.isFocused)
+                .Append(" listenerPause=")
+                .Append(AudioListener.pause)
+                .AppendLine();
+            builder.Append("requestedLogicalSeconds=")
+                .Append(requestedLogicalSeconds.ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" synchronizationCountdownSeconds=")
+                .Append(synchronizationCountdownSeconds.ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" requestedSample=")
+                .Append(requestedSample)
+                .Append(" scheduledClipSeconds=")
+                .Append(scheduledClipSeconds.ToString("0.000000", CultureInfo.InvariantCulture))
+                .AppendLine();
+            builder.Append("observedDsp=")
+                .Append(observedDsp.ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" scheduledStartDsp=")
+                .Append(scheduledStartDsp.ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" unityDspNow=")
+                .Append(AudioSettings.dspTime.ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" conductorDsp=")
+                .Append(conductorDspText)
+                .Append(" chartOrigin=")
+                .Append(IsFinite(chartOrigin)
+                    ? chartOrigin.ToString("0.000000", CultureInfo.InvariantCulture)
+                    : "(unavailable)")
+                .AppendLine();
+            builder.Append("actualSample=")
+                .Append(actualSample)
+                .Append(" expectedSample=")
+                .Append(expectedSample.ToString("0.0", CultureInfo.InvariantCulture))
+                .Append(" residualMs=")
+                .Append(residualMs.ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture))
+                .Append(" limitMs=")
+                .Append(GetMaxScheduleResidualMs().ToString("0.0", CultureInfo.InvariantCulture))
+                .Append(" seek=timeSamples:")
+                .Append(usedTimeSamplesForSeek)
+                .AppendLine();
+            builder.Append("pitch=")
+                .Append(GetAttemptPitch().ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" dspResumeWaitMs=")
+                .Append(lastDspResumeWaitMs.ToString("0.0", CultureInfo.InvariantCulture))
+                .Append(" decoderPrimeWaitMs=")
+                .Append(lastDecoderPrimeWaitMs.ToString("0.0", CultureInfo.InvariantCulture))
+                .Append(" decoderPrimeMoved=")
+                .Append(lastDecoderPrimeMoved)
+                .Append(" decoderPrimeSamples=")
+                .Append(lastDecoderPrimeStartSample)
+                .Append("->")
+                .Append(lastDecoderPrimeEndSample)
+                .AppendLine();
+            builder.Append("source: exists=")
+                .Append(source != null)
+                .Append(" enabled=")
+                .Append(ReadEnabledSafe(source))
+                .Append(" active=")
+                .Append(ReadActiveSafe(source))
+                .Append(" playing=")
+                .Append(ReadIsPlayingSafe(source))
+                .Append(" mute=")
+                .Append(ReadMuteSafe(source))
+                .Append(" loop=")
+                .Append(ReadLoopSafe(source))
+                .Append(" time=")
+                .Append(ReadTimeSafe(source).ToString("0.000000", CultureInfo.InvariantCulture))
+                .Append(" timeSamples=")
+                .Append(ReadSampleSafe(source))
+                .AppendLine();
+            builder.Append("clip: exists=")
+                .Append(clip != null)
+                .Append(" name=")
+                .Append(clipName)
+                .Append(" frequency=")
+                .Append(clipFrequency)
+                .Append(" channels=")
+                .Append(clipChannels)
+                .Append(" samples=")
+                .Append(clipSamples)
+                .Append(" length=")
+                .Append(clipLength)
+                .Append(" loadType=")
+                .Append(ReadPropertySafe(clip, "loadType"))
+                .Append(" loadState=")
+                .Append(ReadPropertySafe(clip, "loadState"))
+                .Append(" preloadAudioData=")
+                .Append(ReadPropertySafe(clip, "preloadAudioData"))
+                .AppendLine();
+            builder.Append("audio: outputSampleRate=")
+                .Append(AudioSettings.outputSampleRate)
+                .Append(" dspBufferLength=")
+                .Append(dspBufferLength)
+                .Append(" dspBufferCount=")
+                .Append(dspBufferCount)
+                .Append(" frameDeltaMs=")
+                .Append((Time.unscaledDeltaTime * 1000f).ToString(
+                    "0.0",
+                    CultureInfo.InvariantCulture))
+                .AppendLine();
+            builder.Append("OGG: current=")
+                .Append(oggCurrent)
+                .Append(" lastLookup=")
+                .Append(oggLastLookup)
+                .Append(" entries=")
+                .Append(oggEntries)
+                .Append(" status=")
+                .Append(oggStatus)
+                .AppendLine();
+            builder.AppendLine("attempt trace:");
+            builder.Append(AttemptTrace);
+            builder.AppendLine(
+                "=== end checkpoint schedule failure ===");
+            return builder.ToString();
+        }
+
+        private static string ReadPropertySafe(object target, string propertyName)
+        {
+            try
+            {
+                if (target == null) return "(null)";
+                PropertyInfo property = target.GetType().GetProperty(
+                    propertyName,
+                    BindingFlags.Instance | BindingFlags.Public);
+                if (property == null) return "(unavailable)";
+                object value = property.GetValue(target, null);
+                return value == null ? "(null)" : value.ToString();
+            }
+            catch
+            {
+                return "(error)";
+            }
+        }
+
+        private static float ReadTimeSafe(AudioSource audioSource)
+        {
+            try { return audioSource == null ? 0f : audioSource.time; }
+            catch { return 0f; }
+        }
+
+        private static bool ReadIsPlayingSafe(AudioSource audioSource)
+        {
+            try { return audioSource != null && audioSource.isPlaying; }
+            catch { return false; }
+        }
+
+        private static bool ReadMuteSafe(AudioSource audioSource)
+        {
+            try { return audioSource != null && audioSource.mute; }
+            catch { return false; }
+        }
+
+        private static bool ReadLoopSafe(AudioSource audioSource)
+        {
+            try { return audioSource != null && audioSource.loop; }
+            catch { return false; }
+        }
+
+        private static bool ReadEnabledSafe(AudioSource audioSource)
+        {
+            try { return audioSource != null && audioSource.enabled; }
+            catch { return false; }
+        }
+
+        private static bool ReadActiveSafe(AudioSource audioSource)
+        {
+            try
+            {
+                return audioSource != null &&
+                       audioSource.gameObject != null &&
+                       audioSource.gameObject.activeInHierarchy;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static double GetExpectedSampleAtDsp(double dspTime)
         {
-            if (clip == null || clip.frequency <= 0 || !IsFinite(dspTime))
+            if (clip == null || clip.frequency <= 0 || !IsFinite(dspTime) ||
+                scheduledStartDsp <= 0d)
             {
                 return requestedSample;
             }
@@ -781,7 +1364,16 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static double GetPitch()
         {
-            return Math.Max(0.0001d, Math.Abs(source == null ? 1d : (double)source.pitch));
+            try
+            {
+                return Math.Max(
+                    0.0001d,
+                    Math.Abs(source == null ? 1d : (double)source.pitch));
+            }
+            catch
+            {
+                return 1d;
+            }
         }
 
         private static double GetAttemptPitch()

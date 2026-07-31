@@ -29,6 +29,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static string activeExternalLoadPath;
         private static string status = "未初期化";
         private static string lastLookupResult = "-";
+        private static string currentUsageState = "-";
+        private static AudioClip lastManagedClip;
+        private static bool lastManagedClipWasCacheHit;
+        private static int activeExternalLoads;
         private static long estimatedBytes;
         private static long useSerial;
         private static int hits;
@@ -42,6 +46,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static string Status { get { return status; } }
         internal static string LastLookupResult { get { return lastLookupResult; } }
+        internal static string CurrentUsageState
+        {
+            get
+            {
+                RefreshCurrentUsageState();
+                return currentUsageState;
+            }
+        }
         internal static int EntryCount { get { return Entries.Count; } }
         internal static double EstimatedMegabytes
         {
@@ -64,6 +76,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             activeExternalLoadPath = null;
             status = "待機中";
             lastLookupResult = IsEnabled() ? "-" : "OFF";
+            currentUsageState = IsEnabled() ? "-" : "OFF";
+            lastManagedClip = null;
+            lastManagedClipWasCacheHit = false;
+            activeExternalLoads = 0;
             nextCleanupFrame = Time.frameCount + 120;
         }
 
@@ -116,9 +132,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 {
                     Clear("設定OFF");
                 }
+                currentUsageState = "OFF";
                 return;
             }
 
+            RefreshCurrentUsageState();
             if (Time.frameCount < nextCleanupFrame) return;
             nextCleanupFrame = Time.frameCount + 120;
             TrimToConfiguredBudget(null);
@@ -145,6 +163,12 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 string.Equals(reason, "設定OFF", StringComparison.Ordinal)
                     ? "OFF"
                     : "-";
+            currentUsageState =
+                string.Equals(reason, "設定OFF", StringComparison.Ordinal)
+                    ? "OFF"
+                    : "-";
+            lastManagedClip = null;
+            lastManagedClipWasCacheHit = false;
         }
 
         internal static void NotifyLifecycleStop()
@@ -155,6 +179,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static void Shutdown()
         {
             activeExternalLoadPath = null;
+            activeExternalLoads = 0;
             Clear("mod unload");
             initialized = false;
             status = "終了";
@@ -168,35 +193,39 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             string canonicalPath = NormalizePath(path);
             string conductorName = GetConductorName(path);
             bool cacheHit = false;
-
-            CacheEntry cached;
-            if (TryGetValidEntry(canonicalPath, out cached) &&
-                InjectCachedClip(manager, conductorName, cached.Clip))
-            {
-                cacheHit = true;
-                hits++;
-                lastLookupResult = "HIT";
-                cached.LastUse = NextUseSerial();
-                TryLoadAudioData(cached.Clip);
-                status = "cache hit: " + GetDisplayName(path);
-            }
-            else
-            {
-                misses++;
-                lastLookupResult = "MISS";
-                status = "cache miss: " + GetDisplayName(path);
-                // Do not let AudioManager's filename-only dictionary return a stale
-                // streaming clip or a same-named file from another level.
-                if (manager != null && manager.audioLib != null &&
-                    !string.IsNullOrEmpty(conductorName))
-                {
-                    manager.audioLib.Remove(conductorName);
-                }
-            }
+            activeExternalLoads++;
+            currentUsageState = "LOAD";
 
             IDisposable disposable = original as IDisposable;
             try
             {
+                CacheEntry cached;
+                if (TryGetValidEntry(canonicalPath, out cached) &&
+                    InjectCachedClip(manager, conductorName, cached.Clip))
+                {
+                    cacheHit = true;
+                    hits++;
+                    lastLookupResult = "HIT";
+                    lastManagedClip = cached.Clip;
+                    lastManagedClipWasCacheHit = true;
+                    cached.LastUse = NextUseSerial();
+                    TryLoadAudioData(cached.Clip);
+                    status = "cache hit: " + GetDisplayName(path);
+                }
+                else
+                {
+                    misses++;
+                    lastLookupResult = "MISS";
+                    status = "cache miss: " + GetDisplayName(path);
+                    // Do not let AudioManager's filename-only dictionary return a stale
+                    // streaming clip or a same-named file from another level.
+                    if (manager != null && manager.audioLib != null &&
+                        !string.IsNullOrEmpty(conductorName))
+                    {
+                        manager.audioLib.Remove(conductorName);
+                    }
+                }
+
                 while (true)
                 {
                     bool moved;
@@ -229,6 +258,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             finally
             {
                 activeExternalLoadPath = null;
+                activeExternalLoads = Math.Max(0, activeExternalLoads - 1);
+                RefreshCurrentUsageState();
                 if (disposable != null)
                 {
                     disposable.Dispose();
@@ -318,6 +349,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             Entries[canonicalPath] = entry;
             estimatedBytes += entry.EstimatedBytes;
             stores++;
+            lastManagedClip = loadedClip;
+            lastManagedClipWasCacheHit = false;
             status = "cache登録: " + GetDisplayName(canonicalPath);
             TrimToConfiguredBudget(canonicalPath);
         }
@@ -379,7 +412,87 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             Entries.Remove(entry.Path);
             estimatedBytes = Math.Max(0L, estimatedBytes - entry.EstimatedBytes);
             if (eviction) evictions++;
+            if (ReferenceEquals(lastManagedClip, entry.Clip))
+            {
+                lastManagedClip = null;
+                lastManagedClipWasCacheHit = false;
+            }
             RetireClip(entry.Clip);
+        }
+
+        private static void RefreshCurrentUsageState()
+        {
+            if (!IsEnabled())
+            {
+                currentUsageState = "OFF";
+                return;
+            }
+            if (activeExternalLoads > 0)
+            {
+                currentUsageState = "LOAD";
+                return;
+            }
+
+            AudioClip activeClip = GetActiveSongClip();
+            if (activeClip != null)
+            {
+                if (!ContainsClip(activeClip))
+                {
+                    currentUsageState = "-";
+                    return;
+                }
+
+                currentUsageState =
+                    ReferenceEquals(activeClip, lastManagedClip) &&
+                    lastManagedClipWasCacheHit
+                        ? "HIT"
+                        : "RAM";
+                return;
+            }
+
+            if (lastManagedClip != null && ContainsClip(lastManagedClip))
+            {
+                currentUsageState = lastManagedClipWasCacheHit ? "HIT" : "RAM";
+                return;
+            }
+
+            currentUsageState = "-";
+        }
+
+        private static AudioClip GetActiveSongClip()
+        {
+            try
+            {
+                scrConductor activeConductor = scrConductor.instance;
+                if (activeConductor == null) return null;
+                if (activeConductor.song != null &&
+                    activeConductor.song.clip != null)
+                {
+                    return activeConductor.song.clip;
+                }
+                if (activeConductor.song2 != null)
+                {
+                    return activeConductor.song2.clip;
+                }
+            }
+            catch
+            {
+                // A level transition can replace the conductor between reads.
+            }
+            return null;
+        }
+
+        private static bool ContainsClip(AudioClip audioClip)
+        {
+            if (audioClip == null) return false;
+            foreach (CacheEntry entry in Entries.Values)
+            {
+                if (ReferenceEquals(entry.Clip, audioClip))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static void RetireClip(AudioClip audioClip)
