@@ -33,6 +33,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static float countdownSeconds;
         private static int divisor = 1;
         private static int targetFloor;
+        private static scrConductor synchronizationConductor;
+        private static double synchronizationCountdownSeconds;
 
         internal static string Status { get { return status; } }
         internal static float OriginalBpm { get { return originalBpm; } }
@@ -49,6 +51,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static void BeginEditorPlay()
         {
             SetConductorMultiplier(1f);
+            ClearSynchronizationSnapshot();
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -60,6 +63,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static ScrubScope BeforeScrub(int floorNumber)
         {
             SetConductorMultiplier(1f);
+            ClearSynchronizationSnapshot();
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -140,6 +144,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 // afterward and apply the multiplier for the live countdown. Planet
                 // angular velocity therefore continues to use the chart's original BPM.
                 double originalCrotchet = activeConductor.crotchetAtStart;
+                CaptureSynchronizationCountdown(
+                    activeConductor,
+                    originalCrotchet);
                 scope = new ScrubScope(
                     activeConductor,
                     originalCrotchet,
@@ -216,9 +223,31 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
         }
 
+        internal static double GetAudioSynchronizationCountdownSeconds(
+            scrConductor activeConductor)
+        {
+            if (activeConductor == null || !activeConductor.separateCountdownTime)
+            {
+                return 0d;
+            }
+
+            if (object.ReferenceEquals(
+                    activeConductor,
+                    synchronizationConductor) &&
+                IsFiniteNonNegative(synchronizationCountdownSeconds))
+            {
+                return synchronizationCountdownSeconds;
+            }
+
+            return CalculateStockCountdownSeconds(
+                activeConductor,
+                activeConductor.crotchetAtStart);
+        }
+
         internal static void Reset(string reason)
         {
             SetConductorMultiplier(1f);
+            ClearSynchronizationSnapshot();
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -248,9 +277,48 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
         }
 
+        private static void CaptureSynchronizationCountdown(
+            scrConductor activeConductor,
+            double originalCrotchet)
+        {
+            synchronizationConductor = activeConductor;
+            synchronizationCountdownSeconds =
+                CalculateStockCountdownSeconds(
+                    activeConductor,
+                    originalCrotchet);
+        }
+
+        private static double CalculateStockCountdownSeconds(
+            scrConductor activeConductor,
+            double crotchet)
+        {
+            if (activeConductor == null ||
+                !activeConductor.separateCountdownTime)
+            {
+                return 0d;
+            }
+
+            double seconds =
+                crotchet * (double)Math.Max(0, activeConductor.countdownTicks);
+            return IsFiniteNonNegative(seconds) ? seconds : 0d;
+        }
+
+        private static void ClearSynchronizationSnapshot()
+        {
+            synchronizationConductor = null;
+            synchronizationCountdownSeconds = 0d;
+        }
+
         private static bool IsFinitePositive(float value)
         {
             return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static bool IsFiniteNonNegative(double value)
+        {
+            return value >= 0d &&
+                   !double.IsNaN(value) &&
+                   !double.IsInfinity(value);
         }
     }
 }
