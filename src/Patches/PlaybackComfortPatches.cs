@@ -18,9 +18,28 @@ namespace Kiner.ADOFAIAudioSync.Patches
                 new Type[] { typeof(int), typeof(bool) }) != null;
         }
 
-        private static void Prefix(int __0)
+        private static void Prefix(
+            int __0,
+            out CheckpointCountdownRuntime.ScrubScope __state)
         {
-            CheckpointCountdownRuntime.BeforeScrub(__0);
+            __state = CheckpointCountdownRuntime.BeforeScrub(__0);
+        }
+
+        private static void Postfix(
+            CheckpointCountdownRuntime.ScrubScope __state)
+        {
+            CheckpointCountdownRuntime.EndScrub(__state);
+        }
+
+        private static Exception Finalizer(
+            Exception __exception,
+            CheckpointCountdownRuntime.ScrubScope __state)
+        {
+            // Postfix does not run when the original method throws. EndScrub is
+            // idempotent, so the normal path is safe when Harmony also invokes
+            // this finalizer after Postfix.
+            CheckpointCountdownRuntime.EndScrub(__state);
+            return __exception;
         }
     }
 

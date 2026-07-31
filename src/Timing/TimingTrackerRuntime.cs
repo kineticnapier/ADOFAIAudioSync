@@ -213,7 +213,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             windowRect.x = Mathf.Clamp(windowRect.x, 0f, Mathf.Max(0f, Screen.width - 120f));
             windowRect.y = Mathf.Clamp(windowRect.y, 0f, Mathf.Max(0f, Screen.height - 60f));
             windowRect = GUI.Window(WindowId, windowRect, DrawWindowContents,
-                "ADOFAI BPM + Phase Tap Anchor v0.9.13");
+                "ADOFAI BPM + Phase Tap Anchor v0.9.14");
         }
 
         private static void DrawWindowContents(int id)

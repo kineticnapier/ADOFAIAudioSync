@@ -9,6 +9,24 @@ namespace Kiner.ADOFAIAudioSync.Runtime
     /// </summary>
     internal static class CheckpointCountdownRuntime
     {
+        internal sealed class ScrubScope
+        {
+            internal readonly scrConductor Conductor;
+            internal readonly double OriginalCrotchet;
+            internal readonly float FinalMultiplier;
+            internal bool Restored;
+
+            internal ScrubScope(
+                scrConductor conductor,
+                double originalCrotchet,
+                float finalMultiplier)
+            {
+                Conductor = conductor;
+                OriginalCrotchet = originalCrotchet;
+                FinalMultiplier = finalMultiplier;
+            }
+        }
+
         private static string status = "待機中";
         private static float originalBpm;
         private static float foldedBpm;
@@ -39,7 +57,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             status = "再生準備中";
         }
 
-        internal static void BeforeScrub(int floorNumber)
+        internal static ScrubScope BeforeScrub(int floorNumber)
         {
             SetConductorMultiplier(1f);
             originalBpm = 0f;
@@ -52,14 +70,15 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             if (!Main.Enabled || settings == null || !settings.EnableCheckpointCountdownFold)
             {
                 status = "OFF";
-                return;
+                return null;
             }
             if (!ADOBase.isLevelEditor || GCS.checkpointNum <= 0)
             {
                 status = "先頭再生";
-                return;
+                return null;
             }
 
+            ScrubScope scope = null;
             try
             {
                 scrConductor activeConductor = scrConductor.instance;
@@ -68,14 +87,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     floorNumber < 0 || floorNumber >= maker.listFloors.Count)
                 {
                     status = "床情報不足";
-                    return;
+                    return null;
                 }
 
                 scrFloor floor = maker.listFloors[floorNumber];
                 if (floor == null)
                 {
                     status = "床情報不足";
-                    return;
+                    return null;
                 }
 
                 float pitch = 1f;
@@ -96,7 +115,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 {
                     status = "BPM情報不足";
                     originalBpm = 0f;
-                    return;
+                    return null;
                 }
 
                 float maximumBpm = Math.Max(60f, Math.Min(600f, settings.CheckpointCountdownMaxBpm));
@@ -109,7 +128,32 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     divisor *= 2;
                 }
 
-                activeConductor.countdownSpeedMultiplier = multiplier;
+                // scrController.Scrub uses countdownSpeedMultiplier for one part of
+                // the checkpoint calculation, but its planetary lead-in calculation
+                // reads crotchetAtStart directly. Applying only the multiplier makes
+                // early countdown numbers elapse before the planets are positioned,
+                // leaving only "1" visible.
+                //
+                // During Scrub, transfer the same scale into crotchetAtStart and keep
+                // the multiplier at 1. This makes every stock Scrub calculation use
+                // the same extended duration. Restore the original crotchet immediately
+                // afterward and apply the multiplier for the live countdown. Planet
+                // angular velocity therefore continues to use the chart's original BPM.
+                double originalCrotchet = activeConductor.crotchetAtStart;
+                scope = new ScrubScope(
+                    activeConductor,
+                    originalCrotchet,
+                    multiplier);
+                if (multiplier < 0.9999f &&
+                    originalCrotchet > 0d &&
+                    !double.IsNaN(originalCrotchet) &&
+                    !double.IsInfinity(originalCrotchet))
+                {
+                    activeConductor.crotchetAtStart =
+                        originalCrotchet / multiplier;
+                }
+                activeConductor.countdownSpeedMultiplier = 1f;
+
                 int ticks = Math.Max(1, activeConductor.countdownTicks);
                 countdownSeconds = ticks * 60f / Math.Max(0.0001f, foldedBpm);
                 status = divisor > 1
@@ -124,16 +168,50 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         ", effectiveBpm=" + originalBpm.ToString("0.0") +
                         ", foldedBpm=" + foldedBpm.ToString("0.0") +
                         ", divisor=" + divisor +
-                        ", duration=" + countdownSeconds.ToString("0.000") + " s.");
+                        ", duration=" + countdownSeconds.ToString("0.000") + " s" +
+                        ", scrubCrotchet=" +
+                        activeConductor.crotchetAtStart.ToString("0.000000") + " s.");
                 }
+                return scope;
             }
             catch (Exception ex)
             {
+                EndScrub(scope);
                 SetConductorMultiplier(1f);
                 status = "倍率設定失敗";
                 if (Main.Logger != null)
                 {
                     Main.Logger.Warning("Checkpoint countdown setup failed: " + ex);
+                }
+                return null;
+            }
+        }
+
+        internal static void EndScrub(ScrubScope scope)
+        {
+            if (scope == null || scope.Restored)
+            {
+                return;
+            }
+
+            scope.Restored = true;
+            try
+            {
+                if (scope.Conductor != null)
+                {
+                    scope.Conductor.crotchetAtStart = scope.OriginalCrotchet;
+                    scope.Conductor.countdownSpeedMultiplier =
+                        scope.FinalMultiplier;
+                }
+            }
+            catch (Exception ex)
+            {
+                SetConductorMultiplier(1f);
+                status = "Scrub後の倍率復元失敗";
+                if (Main.Logger != null)
+                {
+                    Main.Logger.Warning(
+                        "Checkpoint countdown restore failed: " + ex);
                 }
             }
         }
