@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{14D38F86-0654-4F89-A6E1-88D1B93E3F3A}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Kiner.ADOFAIAudioSync</RootNamespace>
+    <AssemblyName>ADOFAIAudioSync</AssemblyName>
+    <TargetFrameworkVersion Condition=" '$(TargetFrameworkVersion)' == '' ">v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <GameManagedDir Condition=" '$(GameManagedDir)' == '' and '$(ADOFAI_GAME_MANAGED_DIR)' != '' ">$(ADOFAI_GAME_MANAGED_DIR)</GameManagedDir>
+    <GameManagedDir Condition=" '$(GameManagedDir)' == '' ">$(MSBuildProjectDirectory)\..\reference\Managed</GameManagedDir>
+    <UmmDir Condition=" '$(UmmDir)' == '' ">$(GameManagedDir)\UnityModManager</UmmDir>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <LangVersion>7.3</LangVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <LangVersion>7.3</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="Assembly-CSharp"><HintPath>$(GameManagedDir)\Assembly-CSharp.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="RDTools"><HintPath>$(GameManagedDir)\RDTools.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(GameManagedDir)\Newtonsoft.Json.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(GameManagedDir)\UnityEngine.AudioModule.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityModManager"><HintPath>$(UmmDir)\UnityModManager.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(UmmDir)\0Harmony.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Main.cs" />
+    <Compile Include="AudioSyncSettings.cs" />
+    <Compile Include="EditorSelectionCompat.cs" />
+    <Compile Include="Patches\EditorPlaybackLifecyclePatch.cs" />
+    <Compile Include="Patches\AudioLifecycleAndTimingPatches.cs" />
+    <Compile Include="Patches\CheckpointStartHandshakePatches.cs" />
+    <Compile Include="Runtime\AudioSyncRuntime.cs" />
+    <Compile Include="Runtime\CheckpointStartHandshakeRuntime.cs" />
+    <Compile Include="Runtime\AudioSyncBehaviour.cs" />
+    <Compile Include="Runtime\AudioSyncPrewarmRuntime.cs" />
+    <Compile Include="Runtime\AudioSyncLifecycleRuntime.cs" />
+    <Compile Include="Runtime\ConductorDriftRuntime.cs" />
+    <Compile Include="Runtime\DspProbeCueRuntime.cs" />
+    <Compile Include="Timing\TimingTrackerRuntime.cs" />
+    <Compile Include="Timing\PlayErrorCorrectionRuntime.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
