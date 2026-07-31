@@ -61,7 +61,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 EnsureStyles();
                 string error = string.IsNullOrEmpty(AudioSyncRuntime.LastError) ? "-" : AudioSyncRuntime.LastError;
                 string text =
-                    "ADOFAI AudioSync v0.9.11  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
+                    "ADOFAI AudioSync v0.9.12  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
                     "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                     "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                     " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +
@@ -80,6 +80,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     "途中再生handshake: " + CheckpointStartHandshakeRuntime.Status + Environment.NewLine +
                     "予約残差 " +
                     CheckpointStartHandshakeRuntime.LastScheduleResidualMs.ToString("+0.0;-0.0;0.0") + "ms" +
+                    " / playhead補正 " +
+                    CheckpointStartHandshakeRuntime.LastPlayheadCorrectionMs.ToString("+0.0;-0.0;0.0") + "ms" +
                     " / retries " + CheckpointStartHandshakeRuntime.RetryCount + Environment.NewLine +
                     "start wait " + CheckpointStartHandshakeRuntime.LastStartDelayMs.ToString("0.0") +
                     "ms / sample actual " + CheckpointStartHandshakeRuntime.CurrentSample +

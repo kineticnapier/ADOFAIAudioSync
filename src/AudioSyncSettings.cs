@@ -16,17 +16,17 @@ namespace Kiner.ADOFAIAudioSync
         public int CheckpointStartStableFrames = 2;
         public float CheckpointStartTimeoutMs = 2000.0f;
         // Legacy v0.9.8-v0.9.10 fields retained for Settings.xml compatibility.
-        // v0.9.11 does not call ScrubToFloorNumber during the start handshake.
+        // The current handshake does not call ScrubToFloorNumber.
         public bool EnableCheckpointVisualLeadIn = false;
         public float CheckpointVisualPrerollMs = 250.0f;
         public float CheckpointScheduleLeadMs = 600.0f;
-        // Kept under its old serialized name. In v0.9.11 this is the maximum absolute
+        // Kept under its old serialized name. This is the maximum absolute
         // residual between the observed sample and the sample expected from the DSP schedule.
         public float CheckpointMaxInitialAdvanceMs = 50.0f;
         public int CheckpointScheduleRetryCount = 1;
 
         // Legacy v0.9.6 fields retained only so old Settings.xml files deserialize cleanly.
-        // v0.9.11 never changes the checkpoint floor and does not use these values.
+        // The current handshake never changes the checkpoint floor and does not use these values.
         public bool EnablePracticePreroll = false;
         public float PracticePrerollBeats = 4.0f;
 

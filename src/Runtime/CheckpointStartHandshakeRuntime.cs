@@ -14,11 +14,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
     /// Earlier AudioSync builds either released the planets at that advanced position or
     /// visually advanced them while the chart clock was frozen.
     ///
-    /// v0.9.11 schedules the already-seeked AudioSource a short time in the future, then
-    /// compares the observed playhead with the sample expected at that exact DSP time.
-    /// Normal frame time spent confirming playback is therefore not mistaken for a start
-    /// offset. The final chart origin is derived from the known reservation instead of a
-    /// frame-dependent AudioSettings.dspTime/timeSamples snapshot.
+    /// The already-seeked AudioSource is scheduled a short time in the future. The expected
+    /// sample at the observation DSP time is used only to reject abnormal starts. Once a
+    /// start is accepted, the chart is aligned once to the observed playhead, matching the
+    /// relationship maintained by ADOFAI's stock DesyncFix.
     /// </summary>
     internal static class CheckpointStartHandshakeRuntime
     {
@@ -54,7 +53,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static double scheduledPitch;
         private static double scheduledClipSeconds;
         private static double lastStartDelayMs;
-        private static double lastAnchorAdjustmentMs;
+        private static double lastPlayheadCorrectionMs;
         private static double lastScheduleResidualMs;
         private static double lastExpectedSample;
         private static int completionCount;
@@ -81,7 +80,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static string Status { get { return status; } }
         internal static string LastError { get { return lastError; } }
         internal static double LastStartDelayMs { get { return lastStartDelayMs; } }
-        internal static double LastAnchorAdjustmentMs { get { return lastAnchorAdjustmentMs; } }
+        internal static double LastPlayheadCorrectionMs { get { return lastPlayheadCorrectionMs; } }
         internal static double LastScheduleResidualMs { get { return lastScheduleResidualMs; } }
         internal static int ExpectedSample { get { return (int)Math.Round(lastExpectedSample); } }
         internal static int CompletionCount { get { return completionCount; } }
@@ -127,7 +126,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 clip = nextClip;
                 requestedLogicalSeconds = newTime;
                 lastStartDelayMs = 0d;
-                lastAnchorAdjustmentMs = 0d;
+                lastPlayheadCorrectionMs = 0d;
                 lastScheduleResidualMs = 0d;
                 lastExpectedSample = 0d;
                 attemptNumber = 0;
@@ -232,10 +231,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 return;
             }
 
-            double observedDspBefore = AudioSettings.dspTime;
-            currentSample = ReadSampleSafe(source);
-            double observedDspAfter = AudioSettings.dspTime;
-            double observedDsp = (observedDspBefore + observedDspAfter) * 0.5d;
+            double observedDsp;
+            CaptureStablePlayheadSnapshot(out observedDsp, out currentSample);
             double pitch = GetAttemptPitch();
             double expectedSample = GetExpectedSampleAtDsp(observedDsp);
             double residualMs = SampleDeltaToRealMilliseconds(currentSample - expectedSample, pitch);
@@ -292,7 +289,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             status = reason ?? "待機中";
             lastError = string.Empty;
             lastStartDelayMs = 0d;
-            lastAnchorAdjustmentMs = 0d;
+            lastPlayheadCorrectionMs = 0d;
             lastScheduleResidualMs = 0d;
             lastExpectedSample = 0d;
             consecutiveMovingFrames = 0;
@@ -419,22 +416,22 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
 
             double countdownSeconds = GetStockScrubCountdownSeconds(instance);
-            double previousOrigin = ReadDspTimeSong(instance);
-            double finalOrigin = fallback
-                ? nowDsp - (actualClipSeconds + countdownSeconds) / pitch
-                : scheduledStartDsp - (scheduledClipSeconds + countdownSeconds) / pitch;
+            double scheduledOrigin =
+                scheduledStartDsp - (scheduledClipSeconds + countdownSeconds) / pitch;
+            double finalOrigin =
+                nowDsp - (actualClipSeconds + countdownSeconds) / pitch;
             WriteDspTimeSong(instance, finalOrigin);
 
             lastActualSample = currentSample;
             lastStartDelayMs = Math.Max(0d,
                 (Time.realtimeSinceStartupAsDouble - attemptStartRealtime) * 1000d);
-            lastAnchorAdjustmentMs = (finalOrigin - previousOrigin) * 1000d;
+            lastPlayheadCorrectionMs = (finalOrigin - scheduledOrigin) * 1000d;
             completionCount++;
             state = fallback ? HandshakeState.TimedOut : HandshakeState.Aligned;
             status = fallback
                 ? "途中再生: 残差警告つきで実playheadへ整列"
-                : "途中再生: DSP予約へ固定 / 残差 " +
-                  FormatSignedMilliseconds(lastScheduleResidualMs);
+                : "途中再生: 実playheadへ整列 / 補正 " +
+                  FormatSignedMilliseconds(lastPlayheadCorrectionMs);
 
             if (Main.Logger != null)
             {
@@ -446,7 +443,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     ", scheduleResidual=" +
                     lastScheduleResidualMs.ToString("+0.0;-0.0;0.0") + " ms" +
                     ", attempt=" + (attemptNumber + 1) +
-                    ", originAdjustment=" + lastAnchorAdjustmentMs.ToString("+0.0;-0.0;0.0") + " ms.");
+                    ", playheadCorrection=" +
+                    lastPlayheadCorrectionMs.ToString("+0.0;-0.0;0.0") + " ms.");
             }
         }
 
@@ -459,7 +457,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 return;
             }
 
-            int currentSample = ReadSampleSafe(source);
+            double observedDsp;
+            int currentSample;
+            CaptureStablePlayheadSnapshot(out observedDsp, out currentSample);
             if (attemptNumber < GetMaxRetryCount())
             {
                 retryCount++;
@@ -471,7 +471,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             lastActualSample = currentSample;
             lastError = "AudioSource.timeSamples did not begin normally before timeout.";
-            AlignAndRelease(conductor, AudioSettings.dspTime, currentSample, true);
+            AlignAndRelease(conductor, observedDsp, currentSample, true);
         }
 
         private static void RebuildHitTimelineOnce()
@@ -734,6 +734,34 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             catch { return 0; }
         }
 
+        private static void CaptureStablePlayheadSnapshot(
+            out double observedDsp,
+            out int observedSample)
+        {
+            double dspBefore = AudioSettings.dspTime;
+            double dspAfter = dspBefore;
+            int sample = ReadSampleSafe(source);
+
+            // AudioSettings.dspTime and AudioSource.timeSamples are updated by the audio
+            // thread. Retry a few times if a DSP buffer boundary lands inside the read so
+            // the pair does not inherit an avoidable one-buffer race.
+            for (int i = 0; i < 4; i++)
+            {
+                dspBefore = AudioSettings.dspTime;
+                sample = ReadSampleSafe(source);
+                dspAfter = AudioSettings.dspTime;
+                if (dspBefore == dspAfter)
+                {
+                    observedDsp = dspBefore;
+                    observedSample = sample;
+                    return;
+                }
+            }
+
+            observedDsp = (dspBefore + dspAfter) * 0.5d;
+            observedSample = sample;
+        }
+
         private static double SampleToSeconds(int sample, AudioClip audioClip)
         {
             if (audioClip == null || audioClip.frequency <= 0)
@@ -741,20 +769,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 return double.NaN;
             }
             return (double)Math.Max(0, sample) / audioClip.frequency;
-        }
-
-        private static double ReadDspTimeSong(scrConductor instance)
-        {
-            if (instance == null || DspTimeSongField == null)
-            {
-                return double.NaN;
-            }
-            try
-            {
-                object value = DspTimeSongField.GetValue(instance);
-                return value is double ? (double)value : double.NaN;
-            }
-            catch { return double.NaN; }
         }
 
         private static void WriteDspTimeSong(scrConductor instance, double value)

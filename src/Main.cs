@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.11 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v0.9.12 bootstrap started.");
 
             try
             {
@@ -59,8 +59,8 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.11 loaded.");
-                Logger.Log("Selected-floor playback uses a future DSP reservation and validates the observed sample against the DSP-time expectation.");
+                Logger.Log("ADOFAI AudioSync v0.9.12 loaded.");
+                Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
                            " (" + Settings.CheckpointStartStableFrames + " moving frame(s), timeout " +
                            Settings.CheckpointStartTimeoutMs.ToString("0") + " ms).");
@@ -380,7 +380,7 @@ namespace Kiner.ADOFAIAudioSync
                 "開始ゲートの診断表示を画面左上へ表示する");
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.11）");
+            GUILayout.Label("途中再生のDSP予約（v0.9.12）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 
@@ -405,6 +405,8 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.Label("状態: " + CheckpointStartHandshakeRuntime.Status);
             GUILayout.Label("直近の予約残差: " +
                             CheckpointStartHandshakeRuntime.LastScheduleResidualMs.ToString("+0.0;-0.0;0.0") + "ms" +
+                            " / 適用補正 " +
+                            CheckpointStartHandshakeRuntime.LastPlayheadCorrectionMs.ToString("+0.0;-0.0;0.0") + "ms" +
                             " / 再予約累計 " + CheckpointStartHandshakeRuntime.RetryCount +
                             " / 完了 " + CheckpointStartHandshakeRuntime.CompletionCount +
                             " / timeout " + CheckpointStartHandshakeRuntime.TimeoutCount);
