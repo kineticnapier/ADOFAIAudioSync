@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.16 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v0.9.17 bootstrap started.");
 
             try
             {
@@ -61,7 +61,7 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.16 loaded.");
+                Logger.Log("ADOFAI AudioSync v0.9.17 loaded.");
                 Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
                            " (" + Settings.CheckpointStartStableFrames + " moving frame(s), timeout " +
@@ -306,6 +306,16 @@ namespace Kiner.ADOFAIAudioSync
                 Settings.ApplyCountdownFoldToWaitBeats = false;
                 Settings.SettingsRevision = 916;
             }
+            if (Settings.SettingsRevision < 917)
+            {
+                // v0.9.17 replaces the single oversized overlay with an
+                // off/compact/detailed cycle. Migrate an enabled v0.9.16
+                // overlay to the new compact view; detailed diagnostics remain
+                // one Ctrl+F9 press away.
+                Settings.OverlayMode = Settings.ShowOverlay ? 1 : 0;
+                Settings.ShowOverlay = false;
+                Settings.SettingsRevision = 917;
+            }
             if (Settings.TapPhaseIgnoreMs < 0f) Settings.TapPhaseIgnoreMs = 0f;
             if (Settings.TapPhaseIgnoreMs > 100f) Settings.TapPhaseIgnoreMs = 100f;
             if (Settings.TapPhaseMaxCorrectionPercent < 0.1f) Settings.TapPhaseMaxCorrectionPercent = 0.1f;
@@ -336,6 +346,8 @@ namespace Kiner.ADOFAIAudioSync
             if (Settings.CheckpointCountdownMaxBpm > 600f) Settings.CheckpointCountdownMaxBpm = 600f;
             if (Settings.OggCacheMaxMegabytes < 64) Settings.OggCacheMaxMegabytes = 64;
             if (Settings.OggCacheMaxMegabytes > 4096) Settings.OggCacheMaxMegabytes = 4096;
+            if (Settings.OverlayMode < 0) Settings.OverlayMode = 0;
+            if (Settings.OverlayMode > 2) Settings.OverlayMode = 2;
             if (Settings.ErrorCorrectionMinSamples < 3) Settings.ErrorCorrectionMinSamples = 3;
             if (Settings.ErrorCorrectionMinSamples > 100) Settings.ErrorCorrectionMinSamples = 100;
             if (Settings.ErrorCorrectionMaxPercent < 0.01f) Settings.ErrorCorrectionMaxPercent = 0.01f;
@@ -413,11 +425,22 @@ namespace Kiner.ADOFAIAudioSync
 
             Settings.EnableStartGate = GUILayout.Toggle(Settings.EnableStartGate,
                 "エディター側の全準備後まで scnGame.Play を保留する");
-            Settings.ShowOverlay = GUILayout.Toggle(Settings.ShowOverlay,
-                "開始ゲートの診断表示を画面左上へ表示する");
+            GUILayout.Label(
+                "Ctrl+F9 診断表示: " +
+                (Settings.OverlayMode == 0
+                    ? "OFF"
+                    : Settings.OverlayMode == 1 ? "簡易" : "詳細"));
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button((Settings.OverlayMode == 0 ? "● " : "") + "OFF"))
+                Settings.OverlayMode = 0;
+            if (GUILayout.Button((Settings.OverlayMode == 1 ? "● " : "") + "簡易"))
+                Settings.OverlayMode = 1;
+            if (GUILayout.Button((Settings.OverlayMode == 2 ? "● " : "") + "詳細"))
+                Settings.OverlayMode = 2;
+            GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.16）");
+            GUILayout.Label("途中再生のDSP予約（v0.9.17）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 

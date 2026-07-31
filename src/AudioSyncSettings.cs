@@ -6,7 +6,10 @@ namespace Kiner.ADOFAIAudioSync
     {
         public int SettingsRevision = 0;
         public bool EnableStartGate = true;
+        // Legacy v0.9.16 field retained so existing Settings.xml files migrate cleanly.
         public bool ShowOverlay = false;
+        // 0 = off, 1 = compact, 2 = detailed diagnostics.
+        public int OverlayMode = 0;
         public int ExtraPreparationFrames = 0;
         public bool EnableRapidRestartGuard = true;
         public float RapidRestartCooldownMs = 500.0f;

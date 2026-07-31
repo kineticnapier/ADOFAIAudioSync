@@ -28,6 +28,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static string activeExternalLoadPath;
         private static string status = "未初期化";
+        private static string lastLookupResult = "-";
         private static long estimatedBytes;
         private static long useSerial;
         private static int hits;
@@ -40,6 +41,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static bool streamOverridePatchInstalled;
 
         internal static string Status { get { return status; } }
+        internal static string LastLookupResult { get { return lastLookupResult; } }
         internal static int EntryCount { get { return Entries.Count; } }
         internal static double EstimatedMegabytes
         {
@@ -61,6 +63,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             initialized = true;
             activeExternalLoadPath = null;
             status = "待機中";
+            lastLookupResult = IsEnabled() ? "-" : "OFF";
             nextCleanupFrame = Time.frameCount + 120;
         }
 
@@ -138,6 +141,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             estimatedBytes = 0L;
             DestroyRetiredClipsWhenSafe();
             status = (reason ?? "手動") + " / cache 0件";
+            lastLookupResult =
+                string.Equals(reason, "設定OFF", StringComparison.Ordinal)
+                    ? "OFF"
+                    : "-";
         }
 
         internal static void NotifyLifecycleStop()
@@ -168,6 +175,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 cacheHit = true;
                 hits++;
+                lastLookupResult = "HIT";
                 cached.LastUse = NextUseSerial();
                 TryLoadAudioData(cached.Clip);
                 status = "cache hit: " + GetDisplayName(path);
@@ -175,6 +183,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             else
             {
                 misses++;
+                lastLookupResult = "MISS";
                 status = "cache miss: " + GetDisplayName(path);
                 // Do not let AudioManager's filename-only dictionary return a stale
                 // streaming clip or a same-named file from another level.

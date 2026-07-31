@@ -48,11 +48,13 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int lastObservedSample;
         private static int consecutiveMovingFrames;
         private static int stagnantFramesAfterMotion;
+        private static double attemptPreparationStartedRealtime;
         private static double attemptStartRealtime;
         private static double scheduledStartDsp;
         private static double scheduledPitch;
         private static double scheduledClipSeconds;
         private static double synchronizationCountdownSeconds;
+        private static double lastDspResumeWaitMs;
         private static double lastStartDelayMs;
         private static double lastPlayheadCorrectionMs;
         private static double lastScheduleResidualMs;
@@ -80,6 +82,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static string Status { get { return status; } }
         internal static string LastError { get { return lastError; } }
+        internal static double LastDspResumeWaitMs { get { return lastDspResumeWaitMs; } }
         internal static double LastStartDelayMs { get { return lastStartDelayMs; } }
         internal static double LastPlayheadCorrectionMs { get { return lastPlayheadCorrectionMs; } }
         internal static double LastScheduleResidualMs { get { return lastScheduleResidualMs; } }
@@ -129,6 +132,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 synchronizationCountdownSeconds =
                     CheckpointCountdownRuntime
                         .GetAudioSynchronizationCountdownSeconds(instance);
+                lastDspResumeWaitMs = 0d;
                 lastStartDelayMs = 0d;
                 lastPlayheadCorrectionMs = 0d;
                 lastScheduleResidualMs = 0d;
@@ -187,7 +191,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             if (state == HandshakeState.Priming)
             {
-                status = "途中再生: 予約準備中";
+                status = "途中再生: DSP時計の再開待ち";
                 return;
             }
 
@@ -292,6 +296,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             state = HandshakeState.Idle;
             status = reason ?? "待機中";
             lastError = string.Empty;
+            lastDspResumeWaitMs = 0d;
             lastStartDelayMs = 0d;
             lastPlayheadCorrectionMs = 0d;
             lastScheduleResidualMs = 0d;
@@ -313,18 +318,92 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 if (state == HandshakeState.Priming)
                 {
-                    // Preserve the two-frame initialization window used by stock DesyncFix.
+                    // Stock checkpoint setup enters ScrubMusicToTime while AudioListener.pause
+                    // is already true. Unity freezes AudioSettings.dspTime in that state and
+                    // new play requests start paused. v0.9.16 sent Stop, seek and PlayScheduled
+                    // to an existing voice in one paused command batch. Its first playhead
+                    // could retain several queued output buffers; a retry worked after that
+                    // batch and the DSP clock had both settled.
+                    //
+                    // First let Stop/seek cross the Unity command boundary, then resume the
+                    // listener and wait until dspTime is demonstrably live. Only after that do
+                    // we create the future reservation. The chart remains pinned throughout.
                     yield return null;
                     yield return null;
                     if (!TokenIsCurrent(token) || !IsSessionValid())
                     {
                         yield break;
                     }
+
+                    double pausedDsp = AudioSettings.dspTime;
+                    double resumeStartedRealtime = Time.realtimeSinceStartupAsDouble;
                     AudioListener.pause = false;
-                    lastObservedSample = ReadSampleSafe(source);
-                    consecutiveMovingFrames = 0;
-                    stagnantFramesAfterMotion = 0;
-                    state = HandshakeState.WaitingForScheduledStart;
+
+                    int resumeFrames = 0;
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= pausedDsp + 0.000001d &&
+                           resumeFrames < 12)
+                    {
+                        resumeFrames++;
+                        yield return null;
+                    }
+                    if (!TokenIsCurrent(token) || !IsSessionValid() ||
+                        state != HandshakeState.Priming)
+                    {
+                        yield break;
+                    }
+                    if (AudioSettings.dspTime <= pausedDsp + 0.000001d)
+                    {
+                        FailAndRelease(
+                            "途中再生のDSP時計が再開しなかったため予約を中止しました");
+                        yield break;
+                    }
+
+                    // Issue one final Stop on the live DSP clock and let it cross at least
+                    // one audio update boundary. This prevents the new reservation from
+                    // sharing the queued voice state that caused v0.9.16's deterministic
+                    // first-attempt advance.
+                    source.Stop();
+                    double stopDsp = AudioSettings.dspTime;
+                    int stopFrames = 0;
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= stopDsp + 0.000001d &&
+                           stopFrames < 12)
+                    {
+                        stopFrames++;
+                        yield return null;
+                    }
+                    if (!TokenIsCurrent(token) || !IsSessionValid() ||
+                        state != HandshakeState.Priming)
+                    {
+                        yield break;
+                    }
+                    if (AudioSettings.dspTime <= stopDsp + 0.000001d)
+                    {
+                        FailAndRelease(
+                            "途中再生の停止処理をDSPへ反映できなかったため予約を中止しました");
+                        yield break;
+                    }
+
+                    lastDspResumeWaitMs = Math.Max(
+                        0d,
+                        (Time.realtimeSinceStartupAsDouble - resumeStartedRealtime) *
+                        1000d);
+                    try
+                    {
+                        SchedulePreparedAttempt();
+                    }
+                    catch (Exception ex)
+                    {
+                        FailAndRelease(
+                            "途中再生のDSP予約作成に失敗しました: " +
+                            ex.GetType().Name + ": " + ex.Message);
+                        yield break;
+                    }
                 }
 
                 if (state == HandshakeState.WaitingForScheduledStart ||
@@ -364,6 +443,23 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             AudioListener.pause = true;
             try { source.Stop(); } catch { }
 
+            scheduledStartDsp = 0d;
+            scheduledPitch = GetPitch();
+            SeekAttemptToRequestedSample();
+
+            if (!retry || attemptPreparationStartedRealtime <= 0d)
+            {
+                attemptPreparationStartedRealtime =
+                    Time.realtimeSinceStartupAsDouble;
+            }
+            attemptStartRealtime = Time.realtimeSinceStartupAsDouble;
+            state = HandshakeState.Priming;
+            status = "途中再生: " + (retry ? "再予約" : "予約") +
+                     "の停止・シーク反映待ち";
+        }
+
+        private static void SeekAttemptToRequestedSample()
+        {
             double clipSeconds =
                 requestedLogicalSeconds +
                 conductor.addoffset -
@@ -392,20 +488,37 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             usedTimeSamplesForSeek = sampleSeeked;
             consecutiveMovingFrames = 0;
             stagnantFramesAfterMotion = 0;
-            scheduledPitch = GetPitch();
             scheduledClipSeconds = SampleToSeconds(sample, clip);
             if (!IsFinite(scheduledClipSeconds))
             {
                 scheduledClipSeconds = clipSeconds;
             }
+        }
 
-            double leadMs = GetScheduleLeadMs() + (retry ? attemptNumber * 250d : 0d);
+        private static void SchedulePreparedAttempt()
+        {
+            if (!IsSessionValid())
+            {
+                throw new InvalidOperationException(
+                    "Checkpoint audio session was lost before scheduling.");
+            }
+
+            // Reassert the seek after the listener/DSP clock has resumed. This keeps
+            // PlayScheduled out of the same Unity audio-command batch as Stop.
+            scheduledPitch = GetPitch();
+            SeekAttemptToRequestedSample();
+
+            double leadMs = GetScheduleLeadMs() + attemptNumber * 250d;
             scheduledStartDsp = AudioSettings.dspTime + leadMs / 1000d;
             source.PlayScheduled(scheduledStartDsp);
-
             attemptStartRealtime = Time.realtimeSinceStartupAsDouble;
-            state = HandshakeState.Priming;
-            status = "途中再生: " + (retry ? "再予約" : "予約") + " " + leadMs.ToString("0") + "ms先";
+
+            lastObservedSample = requestedSample;
+            consecutiveMovingFrames = 0;
+            stagnantFramesAfterMotion = 0;
+            state = HandshakeState.WaitingForScheduledStart;
+            status = "途中再生: " + (attemptNumber > 0 ? "再予約" : "予約") +
+                     " " + leadMs.ToString("0") + "ms先";
         }
 
         private static void AlignAndRelease(
@@ -431,7 +544,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             lastActualSample = currentSample;
             lastStartDelayMs = Math.Max(0d,
-                (Time.realtimeSinceStartupAsDouble - attemptStartRealtime) * 1000d);
+                (Time.realtimeSinceStartupAsDouble -
+                 attemptPreparationStartedRealtime) * 1000d);
             lastPlayheadCorrectionMs = (finalOrigin - scheduledOrigin) * 1000d;
             completionCount++;
             state = fallback ? HandshakeState.TimedOut : HandshakeState.Aligned;
@@ -450,6 +564,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     ", scheduleResidual=" +
                     lastScheduleResidualMs.ToString("+0.0;-0.0;0.0") + " ms" +
                     ", attempt=" + (attemptNumber + 1) +
+                    ", dspResumeWait=" +
+                    lastDspResumeWaitMs.ToString("0.0") + " ms" +
                     ", synchronizationCountdown=" +
                     synchronizationCountdownSeconds.ToString("0.000") + " s" +
                     ", playheadCorrection=" +
@@ -601,6 +717,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             lastObservedSample = 0;
             consecutiveMovingFrames = 0;
             stagnantFramesAfterMotion = 0;
+            attemptPreparationStartedRealtime = 0d;
             attemptStartRealtime = 0d;
             scheduledStartDsp = 0d;
             scheduledPitch = 0d;
