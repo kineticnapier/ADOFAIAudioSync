@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.15 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v0.9.16 bootstrap started.");
 
             try
             {
@@ -61,7 +61,7 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.15 loaded.");
+                Logger.Log("ADOFAI AudioSync v0.9.16 loaded.");
                 Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
                            " (" + Settings.CheckpointStartStableFrames + " moving frame(s), timeout " +
@@ -74,7 +74,10 @@ namespace Kiner.ADOFAIAudioSync
                            " ms are automatically rescheduled.");
                 Logger.Log("Checkpoint countdown BPM folding is " +
                            (Settings.EnableCheckpointCountdownFold ? "ON" : "OFF") +
-                           " (maximum " + Settings.CheckpointCountdownMaxBpm.ToString("0") + " BPM).");
+                           " (maximum " + Settings.CheckpointCountdownMaxBpm.ToString("0") +
+                           " BPM, Wait Beats " +
+                           (Settings.ApplyCountdownFoldToWaitBeats ? "included" : "excluded") +
+                           ").");
                 Logger.Log("OGG memory cache is " +
                            (Settings.EnableOggMemoryCache ? "ON" : "OFF") +
                            " (maximum " + Settings.OggCacheMaxMegabytes + " MB).");
@@ -148,6 +151,7 @@ namespace Kiner.ADOFAIAudioSync
                 LogException("Harmony patches failed; tap measurement will continue, but start gate/alignment hooks are disabled", ex);
                 try { harmony.UnpatchAll(modEntry.Info.Id); } catch { }
                 AudioSyncRuntime.SetGatePatchInstalled(false);
+                CheckpointCountdownRuntime.SetWaitBeatsTimelinePatchInstalled(false);
                 OggAudioCacheRuntime.SetStreamOverridePatchInstalled(false);
             }
         }
@@ -293,6 +297,15 @@ namespace Kiner.ADOFAIAudioSync
                 Settings.OggCacheMaxMegabytes = 512;
                 Settings.SettingsRevision = 913;
             }
+            if (Settings.SettingsRevision < 916)
+            {
+                // Countdown folding was originally left active after the checkpoint
+                // countdown, so Pause-event countdown ticks inherited it. Keep those
+                // Wait Beats at chart speed by default and expose the old behavior as
+                // an explicit option.
+                Settings.ApplyCountdownFoldToWaitBeats = false;
+                Settings.SettingsRevision = 916;
+            }
             if (Settings.TapPhaseIgnoreMs < 0f) Settings.TapPhaseIgnoreMs = 0f;
             if (Settings.TapPhaseIgnoreMs > 100f) Settings.TapPhaseIgnoreMs = 100f;
             if (Settings.TapPhaseMaxCorrectionPercent < 0.1f) Settings.TapPhaseMaxCorrectionPercent = 0.1f;
@@ -404,7 +417,7 @@ namespace Kiner.ADOFAIAudioSync
                 "開始ゲートの診断表示を画面左上へ表示する");
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.15）");
+            GUILayout.Label("途中再生のDSP予約（v0.9.16）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 
@@ -450,6 +463,23 @@ namespace Kiner.ADOFAIAudioSync
                             Settings.CheckpointCountdownMaxBpm.ToString("0") + " BPM");
             Settings.CheckpointCountdownMaxBpm = GUILayout.HorizontalSlider(
                 Settings.CheckpointCountdownMaxBpm, 120f, 480f);
+            bool waitBeatsWasIncluded =
+                Settings.ApplyCountdownFoldToWaitBeats;
+            Settings.ApplyCountdownFoldToWaitBeats = GUILayout.Toggle(
+                Settings.ApplyCountdownFoldToWaitBeats,
+                "Pauseイベントの「待機ビート」にも同じ倍率を適用する");
+            if (waitBeatsWasIncluded !=
+                Settings.ApplyCountdownFoldToWaitBeats)
+            {
+                CheckpointCountdownRuntime.OnWaitBeatsSettingChanged();
+            }
+            GUILayout.Label(
+                "OFFなら途中再生開始だけを折りたたみ、譜面中の待機ビートは元の間隔を使います。");
+            GUILayout.Label(
+                "待機ビート分離patch: " +
+                (CheckpointCountdownRuntime.WaitBeatsTimelinePatchInstalled
+                    ? "OK"
+                    : "NG"));
             GUILayout.Label("状態: " + CheckpointCountdownRuntime.Status);
             if (CheckpointCountdownRuntime.OriginalBpm > 0f)
             {

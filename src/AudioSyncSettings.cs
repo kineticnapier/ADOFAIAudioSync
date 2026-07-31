@@ -26,6 +26,7 @@ namespace Kiner.ADOFAIAudioSync
         public int CheckpointScheduleRetryCount = 1;
         public bool EnableCheckpointCountdownFold = true;
         public float CheckpointCountdownMaxBpm = 240.0f;
+        public bool ApplyCountdownFoldToWaitBeats = false;
 
         public bool EnableOggMemoryCache = true;
         public int OggCacheMaxMegabytes = 512;

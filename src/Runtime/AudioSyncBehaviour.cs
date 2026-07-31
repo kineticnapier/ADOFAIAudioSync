@@ -62,7 +62,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 EnsureStyles();
                 string error = string.IsNullOrEmpty(AudioSyncRuntime.LastError) ? "-" : AudioSyncRuntime.LastError;
                 string text =
-                    "ADOFAI AudioSync v0.9.15  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
+                    "ADOFAI AudioSync v0.9.16  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
                     "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                     "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                     " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +

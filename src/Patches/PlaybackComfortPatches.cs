@@ -43,6 +43,69 @@ namespace Kiner.ADOFAIAudioSync.Patches
         }
     }
 
+    [HarmonyPatch(typeof(scrConductor), "PlayHitTimes", new Type[] { })]
+    internal static class WaitBeatsCountdownIsolationPatch
+    {
+        private static bool Prepare()
+        {
+            return AccessTools.Method(
+                       typeof(scrConductor),
+                       "PlayHitTimes",
+                       new Type[] { }) != null &&
+                   AccessTools.Field(
+                       typeof(scrConductor),
+                       "countdownSpeedMultiplier") != null;
+        }
+
+        private static IEnumerable<CodeInstruction> Transpiler(
+            IEnumerable<CodeInstruction> instructions)
+        {
+            FieldInfo multiplierField = AccessTools.Field(
+                typeof(scrConductor),
+                "countdownSpeedMultiplier");
+            MethodInfo helper = AccessTools.Method(
+                typeof(CheckpointCountdownRuntime),
+                "GetWaitBeatsTimelineMultiplier");
+            int replacements = 0;
+
+            foreach (CodeInstruction instruction in instructions)
+            {
+                if (instruction.opcode == OpCodes.Ldfld &&
+                    object.Equals(instruction.operand, multiplierField))
+                {
+                    // The scrConductor instance already on the evaluation stack
+                    // becomes the helper argument, and the helper returns the
+                    // float expected by the original division.
+                    instruction.opcode = OpCodes.Call;
+                    instruction.operand = helper;
+                    replacements++;
+                }
+                yield return instruction;
+            }
+
+            CheckpointCountdownRuntime.SetWaitBeatsTimelinePatchInstalled(
+                replacements > 0);
+        }
+    }
+
+    [HarmonyPatch(typeof(scrController), "PlayerControl_Enter",
+        new Type[] { })]
+    internal static class CountdownMultiplierReleasePatch
+    {
+        private static bool Prepare()
+        {
+            return AccessTools.Method(
+                typeof(scrController),
+                "PlayerControl_Enter",
+                new Type[] { }) != null;
+        }
+
+        private static void Prefix()
+        {
+            CheckpointCountdownRuntime.OnPlayerControlEnter();
+        }
+    }
+
     [HarmonyPatch(typeof(AudioManager), "FindOrLoadAudioClipExternal",
         new Type[] { typeof(string), typeof(bool), typeof(float) })]
     internal static class ExternalOggCachePatch

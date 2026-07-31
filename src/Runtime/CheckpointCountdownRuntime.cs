@@ -35,6 +35,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int targetFloor;
         private static scrConductor synchronizationConductor;
         private static double synchronizationCountdownSeconds;
+        private static ScrubScope activeScrubScope;
+        private static bool checkpointCountdownActive;
+        private static bool waitBeatsTimelinePatchInstalled;
 
         internal static string Status { get { return status; } }
         internal static float OriginalBpm { get { return originalBpm; } }
@@ -42,9 +45,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static float CountdownSeconds { get { return countdownSeconds; } }
         internal static int Divisor { get { return divisor; } }
         internal static int TargetFloor { get { return targetFloor; } }
+        internal static bool WaitBeatsTimelinePatchInstalled
+        {
+            get { return waitBeatsTimelinePatchInstalled; }
+        }
 
         internal static void Initialize()
         {
+            waitBeatsTimelinePatchInstalled = false;
             Reset("待機中");
         }
 
@@ -52,6 +60,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             SetConductorMultiplier(1f);
             ClearSynchronizationSnapshot();
+            activeScrubScope = null;
+            checkpointCountdownActive = false;
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -64,6 +74,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             SetConductorMultiplier(1f);
             ClearSynchronizationSnapshot();
+            activeScrubScope = null;
+            checkpointCountdownActive = false;
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -151,6 +163,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     activeConductor,
                     originalCrotchet,
                     multiplier);
+                activeScrubScope = scope;
                 if (multiplier < 0.9999f &&
                     originalCrotchet > 0d &&
                     !double.IsNaN(originalCrotchet) &&
@@ -184,6 +197,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             catch (Exception ex)
             {
                 EndScrub(scope);
+                activeScrubScope = null;
+                checkpointCountdownActive = false;
                 SetConductorMultiplier(1f);
                 status = "倍率設定失敗";
                 if (Main.Logger != null)
@@ -204,15 +219,23 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             scope.Restored = true;
             try
             {
+                if (object.ReferenceEquals(activeScrubScope, scope))
+                {
+                    activeScrubScope = null;
+                }
                 if (scope.Conductor != null)
                 {
                     scope.Conductor.crotchetAtStart = scope.OriginalCrotchet;
                     scope.Conductor.countdownSpeedMultiplier =
                         scope.FinalMultiplier;
+                    checkpointCountdownActive =
+                        scope.FinalMultiplier < 0.9999f;
                 }
             }
             catch (Exception ex)
             {
+                activeScrubScope = null;
+                checkpointCountdownActive = false;
                 SetConductorMultiplier(1f);
                 status = "Scrub後の倍率復元失敗";
                 if (Main.Logger != null)
@@ -221,6 +244,88 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         "Checkpoint countdown restore failed: " + ex);
                 }
             }
+        }
+
+        /// <summary>
+        /// PlayHitTimes uses countdownSpeedMultiplier both for the initial
+        /// checkpoint countdown and for Pause-event countdown ticks. The initial
+        /// countdown is scheduled through GetCountdownTime, while the Pause ticks
+        /// read the field directly. A transpiler routes only those direct reads
+        /// here so the two behaviors can be configured independently.
+        /// </summary>
+        internal static float GetWaitBeatsTimelineMultiplier(
+            scrConductor activeConductor)
+        {
+            if (activeConductor == null)
+            {
+                return 1f;
+            }
+
+            AudioSyncSettings settings = Main.Settings;
+            if (!Main.Enabled || settings == null ||
+                !settings.EnableCheckpointCountdownFold)
+            {
+                return 1f;
+            }
+
+            if (settings.ApplyCountdownFoldToWaitBeats)
+            {
+                return GetSafeMultiplier(
+                    activeConductor.countdownSpeedMultiplier);
+            }
+
+            // During scrController.Scrub, crotchetAtStart is temporarily divided
+            // by FinalMultiplier so the stock planet lead-in begins early enough.
+            // Cancel that temporary scale for Pause/Wait Beats scheduling. After
+            // Scrub, the original crotchet is already restored, so a multiplier
+            // of 1 keeps those ticks at the chart's normal BPM.
+            ScrubScope scope = activeScrubScope;
+            if (scope != null &&
+                !scope.Restored &&
+                object.ReferenceEquals(scope.Conductor, activeConductor))
+            {
+                float finalMultiplier = GetSafeMultiplier(
+                    scope.FinalMultiplier);
+                return 1f / finalMultiplier;
+            }
+
+            return 1f;
+        }
+
+        internal static void SetWaitBeatsTimelinePatchInstalled(bool installed)
+        {
+            waitBeatsTimelinePatchInstalled = installed;
+            if (!installed && Main.Logger != null)
+            {
+                Main.Logger.Warning(
+                    "PlayHitTimes countdown multiplier reads were not found; " +
+                    "Wait Beats countdown folding cannot be isolated.");
+            }
+        }
+
+        internal static void OnPlayerControlEnter()
+        {
+            checkpointCountdownActive = false;
+            AudioSyncSettings settings = Main.Settings;
+            if (settings == null ||
+                !settings.EnableCheckpointCountdownFold ||
+                !settings.ApplyCountdownFoldToWaitBeats)
+            {
+                SetConductorMultiplier(1f);
+            }
+        }
+
+        internal static void OnWaitBeatsSettingChanged()
+        {
+            AudioSyncSettings settings = Main.Settings;
+            if (settings == null ||
+                settings.ApplyCountdownFoldToWaitBeats ||
+                checkpointCountdownActive)
+            {
+                return;
+            }
+
+            SetConductorMultiplier(1f);
         }
 
         internal static double GetAudioSynchronizationCountdownSeconds(
@@ -248,6 +353,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             SetConductorMultiplier(1f);
             ClearSynchronizationSnapshot();
+            activeScrubScope = null;
+            checkpointCountdownActive = false;
             originalBpm = 0f;
             foldedBpm = 0f;
             countdownSeconds = 0f;
@@ -312,6 +419,15 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static bool IsFinitePositive(float value)
         {
             return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static float GetSafeMultiplier(float value)
+        {
+            if (!IsFinitePositive(value))
+            {
+                return 1f;
+            }
+            return Math.Max(0.0001f, Math.Min(10000f, value));
         }
 
         private static bool IsFiniteNonNegative(double value)
