@@ -10,7 +10,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             Idle,
             EditorPreparing,
             DeferredCaptured,
-            WaitingRestartCooldown,
             InvokingGamePlay,
             Running,
             Passthrough,
@@ -18,7 +17,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         }
 
         private static GateState state;
-        private static scnEditor editor;
         private static scnGame deferredGame;
         private static int deferredCheckpoint;
         private static bool deferredFlag;
@@ -34,21 +32,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static bool gatePatchInstalled;
         private static int capturedPlayCallCount;
 
-        // ADOFAI and Unity can still be cleaning up AudioSources/coroutines at the end
-        // of the frame after returning to the editor. Keep the last definite stop time
-        // and only delay starts that arrive inside the configured cooldown window.
-        private static double lastPlaybackStopRealtime = double.NegativeInfinity;
-        private static string lastPlaybackStopReason = "-";
-        private static int lastPlaybackStopFrame = int.MinValue;
-        private static double remainingRestartCooldownMs;
-        private static int remainingRestartCleanupFrames;
-        private static double lastAppliedRestartCooldownMs;
-        private static int lastAppliedRestartCleanupFrames;
-        private static int restartCooldownApplyCount;
-
-        // Never change the checkpoint chosen by ADOFAI. Stock scrController.Scrub keeps the
-        // selected floor fixed while positioning the planets at an earlier angular phase of
-        // that same floor, so they naturally reach the floor when the lead-in audio arrives.
+        // Preserve the exact checkpoint chosen by ADOFAI. A chart may legitimately use floor
+        // indices that are larger than an older copy of the same chart, so the mod must never
+        // fold or clamp them using angleData.Count.
         private static int actualPlaybackStartFloor;
         private static string sameFloorTakeoffStatus = "待機中";
 
@@ -63,7 +49,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 return state == GateState.EditorPreparing ||
                        state == GateState.DeferredCaptured ||
-                       state == GateState.WaitingRestartCooldown ||
                        state == GateState.InvokingGamePlay;
             }
         }
@@ -78,12 +63,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static bool GatePatchInstalled { get { return gatePatchInstalled; } }
         internal static int CapturedPlayCallCount { get { return capturedPlayCallCount; } }
         internal static bool UsesFutureDspTime { get { return false; } }
-        internal static double RemainingRestartCooldownMs { get { return remainingRestartCooldownMs; } }
-        internal static double LastAppliedRestartCooldownMs { get { return lastAppliedRestartCooldownMs; } }
-        internal static int RemainingRestartCleanupFrames { get { return remainingRestartCleanupFrames; } }
-        internal static int LastAppliedRestartCleanupFrames { get { return lastAppliedRestartCleanupFrames; } }
-        internal static int RestartCooldownApplyCount { get { return restartCooldownApplyCount; } }
-        internal static string LastPlaybackStopReason { get { return lastPlaybackStopReason; } }
         internal static int ActualPlaybackStartFloor { get { return actualPlaybackStartFloor; } }
         internal static string SameFloorTakeoffStatus { get { return sameFloorTakeoffStatus; } }
 
@@ -103,10 +82,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
         }
 
-        internal static void NotifyEditorPlayPrefix(scnEditor instance, int startFloor)
+        internal static void NotifyEditorPlayPrefix(scnEditor instance)
         {
             CancelPending(false);
-            editor = instance;
+            int startFloor = ResolveStartFloor(instance);
             playbackStartFloor = Math.Max(0, startFloor);
             actualPlaybackStartFloor = playbackStartFloor;
             sameFloorTakeoffStatus = playbackStartFloor > 0
@@ -116,10 +95,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             playRequestRealtime = Time.realtimeSinceStartupAsDouble;
             editorPreparationMs = 0d;
             gamePlayCallMs = 0d;
-            lastAppliedRestartCooldownMs = 0d;
-            lastAppliedRestartCleanupFrames = 0;
-            remainingRestartCooldownMs = 0d;
-            remainingRestartCleanupFrames = 0;
             lastError = string.Empty;
             callCaptured = false;
             capturedPlayCallCount = 0;
@@ -139,13 +114,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         // Harmony Prefix for scnGame.Play(int, bool). Returning false suppresses the
         // original call only while scnEditor.Play is still preparing the editor scene.
-        // The exact same call is executed after preparation and, when necessary, after
-        // the rapid-restart cleanup window has elapsed.
+        // The exact same call is executed from scnEditor.Play's Postfix. Do not move it
+        // to a later frame: ReloadAssets and Play are one atomic sequence in stock ADOFAI,
+        // and detaching Play lets floor objects/selection state change underneath it.
         internal static bool ShouldRunGamePlayNow(scnGame game, ref int checkpoint, bool flag)
         {
             if (!invokingDeferredCall)
             {
-                // Diagnostic only. Never rewrite checkpoint or GCS.checkpointNum here.
+                // Diagnostic only. The stock checkpoint is intentionally left unchanged.
                 actualPlaybackStartFloor = Math.Max(0, checkpoint);
                 if (actualPlaybackStartFloor <= 0)
                 {
@@ -214,7 +190,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 return;
             }
 
-            ContinueAfterPreparationFrames();
+            InvokeDeferredGamePlay();
         }
 
         internal static Exception NotifyEditorPlayFinalizer(Exception exception)
@@ -229,37 +205,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             return exception;
         }
 
-        internal static void UpdateFrame()
-        {
-            if (!Main.Enabled || Main.Settings == null)
-            {
-                CancelPending(false);
-                return;
-            }
-
-            if (state == GateState.WaitingRestartCooldown)
-            {
-                if (!IsEditorStillValid())
-                {
-                    Fail("高速再開ガード待機中にエディターが失われました。");
-                    return;
-                }
-
-                remainingRestartCooldownMs = CalculateRemainingRestartCooldownMs();
-                remainingRestartCleanupFrames = CalculateRemainingRestartCleanupFrames();
-                if (remainingRestartCooldownMs <= 0.01d && remainingRestartCleanupFrames <= 0)
-                {
-                    remainingRestartCooldownMs = 0d;
-                    remainingRestartCleanupFrames = 0;
-                    InvokeDeferredGamePlay();
-                }
-                else
-                {
-                    status = BuildRestartWaitStatus();
-                }
-            }
-        }
-
         internal static void NotifyPlaybackStopped()
         {
             NotifyPlaybackStopped("playback stopped");
@@ -268,9 +213,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static void NotifyPlaybackStopped(string reason)
         {
             CheckpointStartHandshakeRuntime.NotifyStop(reason);
-            lastPlaybackStopRealtime = Time.realtimeSinceStartupAsDouble;
-            lastPlaybackStopFrame = Time.frameCount;
-            lastPlaybackStopReason = string.IsNullOrEmpty(reason) ? "playback stopped" : reason;
             CancelPending(false);
             state = GateState.Idle;
             status = "再生停止";
@@ -292,10 +234,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             playbackStartFloor = 0;
             playRequestFrame = 0;
             capturedPlayCallCount = 0;
-            remainingRestartCooldownMs = 0d;
-            remainingRestartCleanupFrames = 0;
-            lastAppliedRestartCooldownMs = 0d;
-            lastAppliedRestartCleanupFrames = 0;
             actualPlaybackStartFloor = 0;
             sameFloorTakeoffStatus = reason ?? "待機中";
         }
@@ -316,6 +254,13 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             try
             {
+                // Match scnEditor.Play exactly: stock playback reads selectedFloors[0],
+                // not the most recently appended item in a multi-selection.
+                if (instance.selectedFloors != null && instance.selectedFloors.Count > 0 &&
+                    instance.selectedFloors[0] != null)
+                {
+                    return Math.Max(0, instance.selectedFloors[0].seqID);
+                }
                 return EditorSelectionCompat.ResolveSelectedFloor(instance, 0);
             }
             catch (Exception)
@@ -323,77 +268,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 // Diagnostic-only value; never allow failure here to block normal playback.
                 return 0;
             }
-        }
-
-        private static void ContinueAfterPreparationFrames()
-        {
-            remainingRestartCooldownMs = CalculateRemainingRestartCooldownMs();
-            remainingRestartCleanupFrames = CalculateRemainingRestartCleanupFrames();
-            if (remainingRestartCooldownMs > 0.01d || remainingRestartCleanupFrames > 0)
-            {
-                state = GateState.WaitingRestartCooldown;
-                lastAppliedRestartCooldownMs = remainingRestartCooldownMs;
-                lastAppliedRestartCleanupFrames = remainingRestartCleanupFrames;
-                restartCooldownApplyCount++;
-                status = BuildRestartWaitStatus();
-                if (Main.Logger != null)
-                {
-                    Main.Logger.Log(
-                        "Rapid restart guard delayed scnGame.Play by " +
-                        remainingRestartCooldownMs.ToString("0.0") + " ms and " +
-                        remainingRestartCleanupFrames + " frame(s) after " +
-                        lastPlaybackStopReason + ".");
-                }
-                return;
-            }
-
-            remainingRestartCooldownMs = 0d;
-            remainingRestartCleanupFrames = 0;
-            InvokeDeferredGamePlay();
-        }
-
-        private static double CalculateRemainingRestartCooldownMs()
-        {
-            if (Main.Settings == null || !Main.Settings.EnableRapidRestartGuard ||
-                double.IsNegativeInfinity(lastPlaybackStopRealtime))
-            {
-                return 0d;
-            }
-
-            double configuredMs = Math.Max(0d, Main.Settings.RapidRestartCooldownMs);
-            double elapsedMs =
-                (Time.realtimeSinceStartupAsDouble - lastPlaybackStopRealtime) * 1000d;
-            if (elapsedMs < 0d)
-            {
-                return 0d;
-            }
-
-            return Math.Max(0d, configuredMs - elapsedMs);
-        }
-
-        private static int CalculateRemainingRestartCleanupFrames()
-        {
-            if (Main.Settings == null || !Main.Settings.EnableRapidRestartGuard ||
-                lastPlaybackStopFrame == int.MinValue)
-            {
-                return 0;
-            }
-
-            int configuredFrames = Math.Max(0, Main.Settings.RapidRestartCleanupFrames);
-            int elapsedFrames = Math.Max(0, Time.frameCount - lastPlaybackStopFrame);
-            return Math.Max(0, configuredFrames - elapsedFrames);
-        }
-
-        private static string BuildRestartWaitStatus()
-        {
-            return "Audio reset待ち: " +
-                   Math.Ceiling(remainingRestartCooldownMs).ToString("0") + "ms / " +
-                   remainingRestartCleanupFrames + "f";
-        }
-
-        private static bool IsEditorStillValid()
-        {
-            return editor != null && scnEditor.instance == editor;
         }
 
         private static void InvokeDeferredGamePlay()
@@ -404,8 +278,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             deferredGame = null;
             callCaptured = false;
-            remainingRestartCooldownMs = 0d;
-            remainingRestartCleanupFrames = 0;
 
             if (game == null)
             {
@@ -423,9 +295,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 gamePlayCallMs =
                     (Time.realtimeSinceStartupAsDouble - started) * 1000d;
                 state = GateState.Running;
-                status = lastAppliedRestartCooldownMs > 0d || lastAppliedRestartCleanupFrames > 0
-                    ? "開始済み（高速再開ガード適用）"
-                    : "開始済み（本体の再生経路を変更せず使用）";
+                status = "開始済み（本体の再生経路を変更せず使用）";
             }
             catch (Exception ex)
             {
@@ -453,9 +323,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             deferredGame = null;
             callCaptured = false;
             capturedPlayCallCount = 0;
-            remainingRestartCooldownMs = 0d;
-            remainingRestartCleanupFrames = 0;
-            editor = null;
 
             if (invokeFallback && pending != null)
             {

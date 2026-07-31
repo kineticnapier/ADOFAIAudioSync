@@ -179,28 +179,88 @@ function Assert-PackageContents {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
-        $files = @(
-            $archive.Entries |
-                Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
-                ForEach-Object {
-                    $_.FullName.Replace("\", "/").TrimStart([char]"/")
-                }
-        )
         $required = @(
             "ADOFAIAudioSync/ADOFAIAudioSync.dll",
             "ADOFAIAudioSync/Info.json"
         )
-        $missing = @($required | Where-Object { $files -notcontains $_ })
-        $unexpected = @($files | Where-Object { $required -notcontains $_ })
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+        $backslashEntries = @($entries | Where-Object { $_.Contains("\") })
+        $missing = @($required | Where-Object { $entries -notcontains $_ })
+        $unexpected = @($entries | Where-Object { $required -notcontains $_ })
+        $duplicates = @(
+            $entries |
+                Group-Object |
+                Where-Object { $_.Count -gt 1 } |
+                ForEach-Object { $_.Name }
+        )
 
-        if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+        if ($backslashEntries.Count -gt 0 -or
+            $missing.Count -gt 0 -or
+            $unexpected.Count -gt 0 -or
+            $duplicates.Count -gt 0) {
             throw @"
 Invalid package contents.
+Backslash entry names (UMM requires '/'):
+  $($backslashEntries -join "`n  ")
 Missing:
   $($missing -join "`n  ")
 Unexpected:
   $($unexpected -join "`n  ")
+Duplicates:
+  $($duplicates -join "`n  ")
 "@
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+function New-UMMPackage {
+    param(
+        [string]$PackageDirectory,
+        [string]$ZipPath
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::Open(
+        $ZipPath,
+        [System.IO.Compression.ZipArchiveMode]::Create
+    )
+    try {
+        $packageFiles = @(
+            [ordered]@{
+                Source = Join-Path $PackageDirectory "ADOFAIAudioSync.dll"
+                Entry = "ADOFAIAudioSync/ADOFAIAudioSync.dll"
+            },
+            [ordered]@{
+                Source = Join-Path $PackageDirectory "Info.json"
+                Entry = "ADOFAIAudioSync/Info.json"
+            }
+        )
+
+        foreach ($packageFile in $packageFiles) {
+            if (-not (Test-Path -LiteralPath $packageFile.Source -PathType Leaf)) {
+                throw "Package source file was not found: '$($packageFile.Source)'."
+            }
+
+            $entry = $archive.CreateEntry(
+                $packageFile.Entry,
+                [System.IO.Compression.CompressionLevel]::Optimal
+            )
+            $sourceStream = [System.IO.File]::OpenRead($packageFile.Source)
+            try {
+                $destinationStream = $entry.Open()
+                try {
+                    $sourceStream.CopyTo($destinationStream)
+                }
+                finally {
+                    $destinationStream.Dispose()
+                }
+            }
+            finally {
+                $sourceStream.Dispose()
+            }
         }
     }
     finally {
@@ -269,10 +329,9 @@ if (-not $SkipPackage) {
     Write-ModInfo -DestinationPath (Join-Path $packageDirectory "Info.json") `
         -Version $version
 
-    # Passing the directory itself (rather than its contents) keeps the UMM mod
-    # folder as the ZIP root: ADOFAIAudioSync/Info.json + DLL.
-    Compress-Archive -Path $packageDirectory `
-        -DestinationPath $zipPath -CompressionLevel Optimal
+    # UMM searches archive names for '/'. Compress-Archive can emit Windows '\'
+    # separators, so create the two entries explicitly with ZIP-standard names.
+    New-UMMPackage -PackageDirectory $packageDirectory -ZipPath $zipPath
     Assert-PackageContents -ZipPath $zipPath
     Write-Host "Package : $zipPath"
 }

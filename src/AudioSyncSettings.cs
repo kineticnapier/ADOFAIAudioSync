@@ -10,9 +10,6 @@ namespace Kiner.ADOFAIAudioSync
         public bool ShowOverlay = false;
         // 0 = off, 1 = compact, 2 = detailed diagnostics.
         public int OverlayMode = 0;
-        public bool EnableRapidRestartGuard = true;
-        public float RapidRestartCooldownMs = 500.0f;
-        public int RapidRestartCleanupFrames = 2;
 
         public bool EnableCheckpointStartHandshake = true;
         public int CheckpointStartStableFrames = 2;

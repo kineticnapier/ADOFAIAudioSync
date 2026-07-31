@@ -79,8 +79,6 @@ namespace Kiner.ADOFAIAudioSync
                 Logger.Log("OGG memory cache is " +
                            (Settings.EnableOggMemoryCache ? "ON" : "OFF") +
                            " (maximum " + Settings.OggCacheMaxMegabytes + " MB).");
-                Logger.Log("Rapid restart guard is " + (Settings.EnableRapidRestartGuard ? "ON" : "OFF") +
-                           " (minimum stop-to-start interval " + Settings.RapidRestartCooldownMs.ToString("0") + " ms).");
                 return true;
             }
             catch (Exception ex)
@@ -196,12 +194,6 @@ namespace Kiner.ADOFAIAudioSync
             }
             if (Settings.SettingsRevision < 904)
             {
-                // Returning to the editor and immediately starting again can overlap Unity's
-                // end-of-frame AudioSource/coroutine cleanup. Only rapid restarts are delayed;
-                // ordinary starts keep their existing timing.
-                Settings.EnableRapidRestartGuard = true;
-                Settings.RapidRestartCooldownMs = 500f;
-                Settings.RapidRestartCleanupFrames = 2;
                 Settings.SettingsRevision = 904;
             }
             if (Settings.SettingsRevision < 905)
@@ -258,6 +250,12 @@ namespace Kiner.ADOFAIAudioSync
             {
                 Settings.SettingsRevision = 920;
             }
+            if (Settings.SettingsRevision < 922)
+            {
+                // v0.9.22 removes the detached rapid-restart Play delay. Unknown legacy
+                // XML elements are ignored by UMM, so only advance the settings revision.
+                Settings.SettingsRevision = 922;
+            }
             if (Settings.TapPhaseIgnoreMs < 0f) Settings.TapPhaseIgnoreMs = 0f;
             if (Settings.TapPhaseIgnoreMs > 100f) Settings.TapPhaseIgnoreMs = 100f;
             if (Settings.TapPhaseMaxCorrectionPercent < 0.1f) Settings.TapPhaseMaxCorrectionPercent = 0.1f;
@@ -266,10 +264,6 @@ namespace Kiner.ADOFAIAudioSync
             if (Settings.TapPhaseMaxAbsoluteMs > 2000f) Settings.TapPhaseMaxAbsoluteMs = 2000f;
             if (Settings.TapMinimumAnchorSpanSeconds < 0.1f) Settings.TapMinimumAnchorSpanSeconds = 0.1f;
             if (Settings.TapMinimumAnchorSpanSeconds > 10f) Settings.TapMinimumAnchorSpanSeconds = 10f;
-            if (Settings.RapidRestartCooldownMs < 100f) Settings.RapidRestartCooldownMs = 100f;
-            if (Settings.RapidRestartCooldownMs > 2000f) Settings.RapidRestartCooldownMs = 2000f;
-            if (Settings.RapidRestartCleanupFrames < 1) Settings.RapidRestartCleanupFrames = 1;
-            if (Settings.RapidRestartCleanupFrames > 8) Settings.RapidRestartCleanupFrames = 8;
             if (Settings.CheckpointStartStableFrames < 1) Settings.CheckpointStartStableFrames = 1;
             if (Settings.CheckpointStartStableFrames > 6) Settings.CheckpointStartStableFrames = 6;
             if (Settings.CheckpointStartTimeoutMs < 500f) Settings.CheckpointStartTimeoutMs = 500f;
@@ -462,22 +456,6 @@ namespace Kiner.ADOFAIAudioSync
             {
                 OggAudioCacheRuntime.Clear("手動消去");
             }
-
-            GUILayout.Space(8f);
-            GUILayout.Label("高速再開ガード");
-            Settings.EnableRapidRestartGuard = GUILayout.Toggle(Settings.EnableRapidRestartGuard,
-                "再生終了直後だけAudioSourceの後始末を待ってから開始する");
-            GUILayout.Label("停止から開始までの最低間隔: " +
-                            Settings.RapidRestartCooldownMs.ToString("0") + "ms");
-            Settings.RapidRestartCooldownMs = GUILayout.HorizontalSlider(
-                Settings.RapidRestartCooldownMs, 100f, 1500f);
-            GUILayout.Label("停止後に必ず通す更新フレーム: " + Settings.RapidRestartCleanupFrames);
-            Settings.RapidRestartCleanupFrames = Mathf.RoundToInt(
-                GUILayout.HorizontalSlider(Settings.RapidRestartCleanupFrames, 1f, 5f));
-            GUILayout.Label("通常再生では待機しません。時間と更新フレームの両方を満たすまでだけ待ちます。");
-            GUILayout.Label("この機能は開始ゲートがONのときだけ動作します。");
-            GUILayout.Label("状態: " + AudioSyncRuntime.Status +
-                            " / 適用回数 " + AudioSyncRuntime.RestartCooldownApplyCount);
 
             GUILayout.Space(10f);
             GUILayout.Label("BPM＋位相タップアンカー（主機能）");

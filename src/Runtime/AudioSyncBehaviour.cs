@@ -41,7 +41,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             if (frameMs > largestHitchMs) largestHitchMs = frameMs;
 
             OggAudioCacheRuntime.Update();
-            AudioSyncRuntime.UpdateFrame();
             TimingTrackerRuntime.Update();
             PlayErrorCorrectionRuntime.Update();
         }
@@ -98,13 +97,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 "同一床助走: " + AudioSyncRuntime.SameFloorTakeoffStatus + Environment.NewLine +
                 "準備 " + AudioSyncRuntime.EditorPreparationMs.ToString("0.0") + "ms / scnGame.Play " +
                 AudioSyncRuntime.GamePlayCallMs.ToString("0.0") + "ms" + Environment.NewLine +
-                "高速再開guard: " + (Main.Settings.EnableRapidRestartGuard ? "ON" : "OFF") +
-                " / wait " + AudioSyncRuntime.RemainingRestartCooldownMs.ToString("0") +
-                "ms/" + AudioSyncRuntime.RemainingRestartCleanupFrames +
-                "f / last " + AudioSyncRuntime.LastAppliedRestartCooldownMs.ToString("0") +
-                "ms/" + AudioSyncRuntime.LastAppliedRestartCleanupFrames +
-                "f / count " + AudioSyncRuntime.RestartCooldownApplyCount + Environment.NewLine +
-                "直前停止: " + AudioSyncRuntime.LastPlaybackStopReason + Environment.NewLine +
                 "途中再生handshake: " + CheckpointStartHandshakeRuntime.Status + Environment.NewLine +
                 "予約残差 " +
                 CheckpointStartHandshakeRuntime.LastScheduleResidualMs.ToString("+0.0;-0.0;0.0") + "ms" +

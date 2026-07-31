@@ -1,13 +1,13 @@
 # v1.0.0 Release Checklist
 
-v0.9.21をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
+v0.9.22をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
 
 ## Build and package
 
 - [ ] `build.ps1`のReleaseビルドが警告・エラーなしで完了する
-- [ ] `artifacts/ADOFAIAudioSync-v0.9.21.zip`が生成される
+- [ ] `artifacts/ADOFAIAudioSync-v0.9.22.zip`が生成される
 - [ ] ZIP内が`ADOFAIAudioSync/ADOFAIAudioSync.dll`と`ADOFAIAudioSync/Info.json`だけである
-- [ ] `Info.json`とオーバーレイの版が`0.9.21`で一致する
+- [ ] `Info.json`とオーバーレイの版が`0.9.22`で一致する
 - [ ] 旧`Settings.xml`を残した更新でも起動する
 
 ## Playback
@@ -17,6 +17,8 @@ v0.9.21をReleaseビルドし、同じDLLで次を確認します。問題が出
 - [ ] OGGで曲頭から再生できる
 - [ ] OGGの初回・キャッシュ再利用後とも選択床から再生できる
 - [ ] 途中再生を短時間に連打しても無音・二重再生・大幅な位置ずれが起きない
+- [ ] エディターへ戻った直後に別の床から開始しても、選択床が後方へ飛ばず音声付きで開始する
+- [ ] 添付再現譜面の床420前後と床895付近を連続して開始しても、選択したcheckpointが書き換わらない
 - [ ] 曲末端付近ではtimeoutを繰り返さず本体Scrubへ戻る
 - [ ] 高BPM区間の途中再生カウントダウンが設定上限へ折りたたまれる
 - [ ] PauseイベントのWait Beatsが設定どおり独立する
@@ -43,7 +45,7 @@ v0.9.21をReleaseビルドし、同じDLLで次を確認します。問題が出
 途中再生が失敗した場合、次の区切りを含む範囲をそのまま保存します。
 
 ```text
-=== ADOFAI AudioSync v0.9.21 checkpoint schedule failure ===
+=== ADOFAI AudioSync v0.9.22 checkpoint schedule failure ===
 ...
 === end checkpoint schedule failure ===
 ```
