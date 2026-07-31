@@ -14,7 +14,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
 
         private static void Postfix()
         {
-            AudioSyncLifecycleRuntime.NotifyStop("AudioManager.StopAllSounds", false);
+            AudioSyncLifecycleRuntime.NotifyStop("AudioManager.StopAllSounds");
         }
     }
 
@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
 
         private static void Prefix()
         {
-            AudioSyncLifecycleRuntime.NotifyStop("scrConductor.KillAllSounds", false);
+            AudioSyncLifecycleRuntime.NotifyStop("scrConductor.KillAllSounds");
         }
     }
 
@@ -43,7 +43,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
         private static void Prefix()
         {
             AudioSyncRuntime.NotifyPlaybackStopped("scrController.Restart");
-            AudioSyncLifecycleRuntime.NotifyStop("scrController.Restart", false);
+            AudioSyncLifecycleRuntime.NotifyStop("scrController.Restart");
         }
     }
 
@@ -60,7 +60,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
         private static void Postfix()
         {
             AudioSyncRuntime.NotifyPlaybackStopped("scrController.FailAction");
-            AudioSyncLifecycleRuntime.NotifyStop("scrController.FailAction", false);
+            AudioSyncLifecycleRuntime.NotifyStop("scrController.FailAction");
         }
     }
 }

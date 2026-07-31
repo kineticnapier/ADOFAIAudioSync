@@ -67,7 +67,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             EnsureStyles();
             string text =
-                "AudioSync v0.9.20  " + (Main.Enabled ? "ON" : "OFF") +
+                "AudioSync v" + Main.Version + "  " + (Main.Enabled ? "ON" : "OFF") +
                 "  OGG:" + OggAudioCacheRuntime.CurrentUsageState + Environment.NewLine +
                 "Residual " +
                 CheckpointStartHandshakeRuntime.LastScheduleResidualMs.ToString("+0.0;-0.0;0.0") +
@@ -88,7 +88,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 ? "-"
                 : AudioSyncRuntime.LastError;
             string text =
-                "ADOFAI AudioSync v0.9.20  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
+                "ADOFAI AudioSync v" + Main.Version +
+                "  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
                 "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                 "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                 " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +

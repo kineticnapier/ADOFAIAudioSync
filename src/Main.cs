@@ -13,6 +13,9 @@ namespace Kiner.ADOFAIAudioSync
 {
     public static class Main
     {
+        internal static readonly string Version =
+            typeof(Main).Assembly.GetName().Version.ToString(3);
+
         internal static UnityModManager.ModEntry.ModLogger Logger;
         internal static AudioSyncSettings Settings;
         internal static string ModPath;
@@ -26,7 +29,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.20 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v" + Version + " bootstrap started.");
 
             try
             {
@@ -56,7 +59,7 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.20 loaded.");
+                Logger.Log("ADOFAI AudioSync v" + Version + " loaded.");
                 Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
                            " (" + Settings.CheckpointStartStableFrames + " audio update(s), timeout " +
@@ -313,7 +316,7 @@ namespace Kiner.ADOFAIAudioSync
             {
                 TimingTrackerRuntime.CloseWindow();
                 PlayErrorCorrectionRuntime.Shutdown();
-                AudioSyncLifecycleRuntime.NotifyStop("Mod disabled", false);
+                AudioSyncLifecycleRuntime.NotifyStop("Mod disabled");
                 OggAudioCacheRuntime.Clear("Mod無効");
             }
             else
@@ -352,7 +355,7 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.20）");
+            GUILayout.Label("途中再生のDSP予約（v" + Version + "）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 

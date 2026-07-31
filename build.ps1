@@ -173,6 +173,41 @@ function Write-ModInfo {
     )
 }
 
+function Assert-PackageContents {
+    param([string]$ZipPath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $files = @(
+            $archive.Entries |
+                Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+                ForEach-Object {
+                    $_.FullName.Replace("\", "/").TrimStart([char]"/")
+                }
+        )
+        $required = @(
+            "ADOFAIAudioSync/ADOFAIAudioSync.dll",
+            "ADOFAIAudioSync/Info.json"
+        )
+        $missing = @($required | Where-Object { $files -notcontains $_ })
+        $unexpected = @($files | Where-Object { $required -notcontains $_ })
+
+        if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+            throw @"
+Invalid package contents.
+Missing:
+  $($missing -join "`n  ")
+Unexpected:
+  $($unexpected -join "`n  ")
+"@
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectPath = Join-Path $scriptRoot "src\ADOFAIAudioSync.csproj"
 if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
@@ -218,7 +253,7 @@ if (-not (Test-Path -LiteralPath $dllPath -PathType Leaf)) {
 if (-not $SkipPackage) {
     $artifactsDirectory = Join-Path $scriptRoot "artifacts"
     $packageName = "ADOFAIAudioSync-v$version"
-    $packageDirectory = Join-Path $artifactsDirectory $packageName
+    $packageDirectory = Join-Path $artifactsDirectory "ADOFAIAudioSync"
     $zipPath = Join-Path $artifactsDirectory "$packageName.zip"
 
     New-Item -ItemType Directory -Path $artifactsDirectory -Force | Out-Null
@@ -231,14 +266,14 @@ if (-not $SkipPackage) {
 
     New-Item -ItemType Directory -Path $packageDirectory | Out-Null
     Copy-Item -LiteralPath $dllPath -Destination $packageDirectory
-    if (Test-Path -LiteralPath $pdbPath -PathType Leaf) {
-        Copy-Item -LiteralPath $pdbPath -Destination $packageDirectory
-    }
     Write-ModInfo -DestinationPath (Join-Path $packageDirectory "Info.json") `
         -Version $version
 
-    Compress-Archive -Path (Join-Path $packageDirectory "*") `
+    # Passing the directory itself (rather than its contents) keeps the UMM mod
+    # folder as the ZIP root: ADOFAIAudioSync/Info.json + DLL.
+    Compress-Archive -Path $packageDirectory `
         -DestinationPath $zipPath -CompressionLevel Optimal
+    Assert-PackageContents -ZipPath $zipPath
     Write-Host "Package : $zipPath"
 }
 

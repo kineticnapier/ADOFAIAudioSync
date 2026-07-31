@@ -23,7 +23,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             }
         }
 
-        internal static void NotifyStop(string reason, bool destroyAudioObjects)
+        internal static void NotifyStop(string reason)
         {
             lastReason = reason ?? "stop";
             // Generic sound-effect cleanup also occurs inside normal checkpoint setup and
@@ -40,7 +40,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static void Shutdown()
         {
-            NotifyStop("mod unload", true);
+            NotifyStop("mod unload");
             if (sceneHookInstalled)
             {
                 SceneManager.sceneUnloaded -= OnSceneUnloaded;
@@ -50,7 +50,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static void OnSceneUnloaded(Scene scene)
         {
-            NotifyStop("scene unloaded: " + scene.name, true);
+            NotifyStop("scene unloaded: " + scene.name);
         }
     }
 }

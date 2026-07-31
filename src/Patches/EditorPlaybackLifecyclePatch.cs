@@ -46,7 +46,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
         {
             AudioSyncRuntime.NotifyPlaybackStopped("scnEditor.SwitchToEditMode");
             Kiner.ADOFAIAudioSync.Timing.PlayErrorCorrectionRuntime.NotifyPlaybackStopped();
-            AudioSyncLifecycleRuntime.NotifyStop("scnEditor.SwitchToEditMode", false);
+            AudioSyncLifecycleRuntime.NotifyStop("scnEditor.SwitchToEditMode");
         }
     }
 }

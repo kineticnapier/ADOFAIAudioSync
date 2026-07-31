@@ -1216,7 +1216,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             StringBuilder builder = new StringBuilder(8192);
             builder.AppendLine(
-                "=== ADOFAI AudioSync v0.9.20 checkpoint schedule failure ===");
+                "=== ADOFAI AudioSync v" + Main.Version +
+                " checkpoint schedule failure ===");
             builder.Append("reason=").AppendLine(reason ?? "(none)");
             builder.Append("attempt=")
                 .Append(attemptNumber + 1)
