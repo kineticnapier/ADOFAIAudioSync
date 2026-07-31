@@ -153,6 +153,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             foreach (CacheEntry entry in Entries.Values)
             {
+                RemoveManagerReferences(entry.Clip);
                 RetireClip(entry.Clip);
             }
             Entries.Clear();
@@ -373,7 +374,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static void TrimToConfiguredBudget(string protectedPath)
         {
             long maximumBytes = GetMaximumBytes();
-            while (estimatedBytes > maximumBytes && Entries.Count > 1)
+            bool protectedEntryWasTooLarge = false;
+            while (estimatedBytes > maximumBytes && Entries.Count > 0)
             {
                 CacheEntry oldest = null;
                 foreach (CacheEntry candidate in Entries.Values)
@@ -389,13 +391,18 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     }
                 }
 
+                if (oldest == null && !string.IsNullOrEmpty(protectedPath))
+                {
+                    Entries.TryGetValue(protectedPath, out oldest);
+                    protectedEntryWasTooLarge = oldest != null;
+                }
                 if (oldest == null) break;
                 RemoveEntry(oldest, true);
             }
 
-            if (estimatedBytes > maximumBytes && Entries.Count == 1)
+            if (protectedEntryWasTooLarge)
             {
-                status += "（単体で上限超過）";
+                status = "OGG単体が上限を超えたためキャッシュ対象外";
             }
         }
 
@@ -417,7 +424,32 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 lastManagedClip = null;
                 lastManagedClipWasCacheHit = false;
             }
+            RemoveManagerReferences(entry.Clip);
             RetireClip(entry.Clip);
+        }
+
+        private static void RemoveManagerReferences(AudioClip audioClip)
+        {
+            if (audioClip == null) return;
+            try
+            {
+                AudioManager manager = AudioManager.Instance;
+                if (manager == null || manager.audioLib == null) return;
+
+                List<string> keys = new List<string>();
+                foreach (KeyValuePair<string, AudioClip> pair in manager.audioLib)
+                {
+                    if (ReferenceEquals(pair.Value, audioClip))
+                        keys.Add(pair.Key);
+                }
+                for (int i = 0; i < keys.Count; i++)
+                    manager.audioLib.Remove(keys[i]);
+            }
+            catch
+            {
+                // The dictionary can be replaced during a level transition. The retired
+                // clip remains queued and will be checked again before destruction.
+            }
         }
 
         private static void RefreshCurrentUsageState()

@@ -75,6 +75,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int lastDecoderPrimeEndSample;
         private static bool sourceMuteCaptured;
         private static bool sourceWasMuted;
+        private static bool runningStockFallback;
 
         private static string status = "待機中";
         private static string lastError = string.Empty;
@@ -813,7 +814,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static bool ShouldIntercept(scrConductor instance, double newTime)
         {
             AudioSyncSettings settings = Main.Settings;
-            if (!Main.Enabled || settings == null || !settings.EnableCheckpointStartHandshake)
+            if (runningStockFallback || !Main.Enabled || settings == null ||
+                !settings.EnableCheckpointStartHandshake)
             {
                 return false;
             }
@@ -825,7 +827,64 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 return false;
             }
-            return IsFinite(newTime) && newTime >= 0d;
+            if (!IsFinite(newTime) || newTime < 0d)
+            {
+                return false;
+            }
+
+            if (!HasEnoughAudioTailForVerification(instance, newTime, instance.song))
+            {
+                status = "曲末端のため本体Scrubを使用";
+                if (Main.Logger != null)
+                {
+                    Main.Logger.Log(
+                        "Checkpoint handshake skipped near the end of the audio clip; " +
+                        "stock ScrubMusicToTime will be used.");
+                }
+                return false;
+            }
+            return true;
+        }
+
+        private static bool HasEnoughAudioTailForVerification(
+            scrConductor instance,
+            double logicalSeconds,
+            AudioSource audioSource)
+        {
+            AudioClip audioClip = audioSource == null ? null : audioSource.clip;
+            if (instance == null || audioClip == null || audioClip.frequency <= 0 ||
+                audioClip.samples <= 1)
+            {
+                return false;
+            }
+
+            double countdown =
+                CheckpointCountdownRuntime.GetAudioSynchronizationCountdownSeconds(instance);
+            double clipSeconds = ClampClipSeconds(
+                logicalSeconds + instance.addoffset - countdown,
+                audioClip);
+            int startSample = SecondsToSample(clipSeconds, audioClip);
+            long remainingSamples = Math.Max(0L, (long)audioClip.samples - startSample - 1L);
+
+            int dspBufferLength = 1024;
+            try
+            {
+                int dspBufferCount;
+                AudioSettings.GetDSPBufferSize(out dspBufferLength, out dspBufferCount);
+            }
+            catch
+            {
+                dspBufferLength = 1024;
+            }
+
+            int outputRate = Math.Max(1, AudioSettings.outputSampleRate);
+            double pitch = Math.Max(0.0001d, Math.Abs((double)audioSource.pitch));
+            long requiredSamples = (long)Math.Ceiling(
+                Math.Max(1, dspBufferLength) *
+                (GetRequiredMovingFrames() + 2d) *
+                audioClip.frequency / outputRate * pitch);
+            requiredSamples = Math.Max(requiredSamples, audioClip.frequency / 20L);
+            return remainingSamples >= requiredSamples;
         }
 
         private static bool IsSessionValid()
@@ -853,6 +912,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static void FailAndRelease(string message)
         {
+            scrConductor fallbackConductor = conductor;
+            AudioSource failedSource = source;
+            double fallbackLogicalSeconds = requestedLogicalSeconds;
             double observedDsp = AudioSettings.dspTime;
             int currentSample = ReadSampleSafe(source);
             double expectedSample = GetExpectedSampleAtDsp(observedDsp);
@@ -867,6 +929,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 expectedSample,
                 residualMs);
             RestoreSourceMute();
+            try
+            {
+                if (failedSource != null) failedSource.Stop();
+            }
+            catch { }
             AudioListener.pause = false;
             state = HandshakeState.Failed;
             lastError = message ?? "checkpoint scheduled start failed";
@@ -875,7 +942,35 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 Main.Logger.Warning(lastError);
             }
+            generation++;
             ClearReferences(true);
+            TryRunStockFallback(fallbackConductor, fallbackLogicalSeconds);
+        }
+
+        private static void TryRunStockFallback(
+            scrConductor fallbackConductor,
+            double logicalSeconds)
+        {
+            if (fallbackConductor == null || !IsFinite(logicalSeconds)) return;
+            try
+            {
+                runningStockFallback = true;
+                fallbackConductor.ScrubMusicToTime(logicalSeconds);
+                fallbackConductor.PlayHitTimes();
+                status += " / 本体Scrubへフォールバック";
+            }
+            catch (Exception ex)
+            {
+                lastError += " / stock fallback failed: " +
+                             ex.GetType().Name + ": " + ex.Message;
+                status += " / 本体Scrubも失敗";
+                if (Main.Logger != null)
+                    Main.Logger.Warning("Stock checkpoint fallback failed: " + ex);
+            }
+            finally
+            {
+                runningStockFallback = false;
+            }
         }
 
         private static void CancelActive(string reason, bool unpause)
@@ -1121,7 +1216,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             StringBuilder builder = new StringBuilder(8192);
             builder.AppendLine(
-                "=== ADOFAI AudioSync v0.9.19 checkpoint schedule failure ===");
+                "=== ADOFAI AudioSync v0.9.20 checkpoint schedule failure ===");
             builder.Append("reason=").AppendLine(reason ?? "(none)");
             builder.Append("attempt=")
                 .Append(attemptNumber + 1)

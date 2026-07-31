@@ -48,6 +48,7 @@
   <ItemGroup>
     <Compile Include="Main.cs" />
     <Compile Include="AudioSyncSettings.cs" />
+    <Compile Include="EditorLevelIdentity.cs" />
     <Compile Include="EditorSelectionCompat.cs" />
     <Compile Include="Patches\EditorPlaybackLifecyclePatch.cs" />
     <Compile Include="Patches\AudioLifecycleAndTimingPatches.cs" />
@@ -58,10 +59,7 @@
     <Compile Include="Runtime\CheckpointCountdownRuntime.cs" />
     <Compile Include="Runtime\OggAudioCacheRuntime.cs" />
     <Compile Include="Runtime\AudioSyncBehaviour.cs" />
-    <Compile Include="Runtime\AudioSyncPrewarmRuntime.cs" />
     <Compile Include="Runtime\AudioSyncLifecycleRuntime.cs" />
-    <Compile Include="Runtime\ConductorDriftRuntime.cs" />
-    <Compile Include="Runtime\DspProbeCueRuntime.cs" />
     <Compile Include="Timing\TimingTrackerRuntime.cs" />
     <Compile Include="Timing\PlayErrorCorrectionRuntime.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

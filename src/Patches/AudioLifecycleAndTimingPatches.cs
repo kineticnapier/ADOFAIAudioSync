@@ -4,20 +4,6 @@ using Kiner.ADOFAIAudioSync.Runtime;
 
 namespace Kiner.ADOFAIAudioSync.Patches
 {
-    [HarmonyPatch(typeof(scrConductor), "PlayHitTimes", new Type[] { })]
-    internal static class HitTimelineCapturePatch
-    {
-        private static bool Prepare()
-        {
-            return AccessTools.Method(typeof(scrConductor), "PlayHitTimes", new Type[] { }) != null;
-        }
-
-        private static void Postfix(scrConductor __instance)
-        {
-            ConductorDriftRuntime.NotifyHitTimelineRebuilt(__instance);
-        }
-    }
-
     [HarmonyPatch(typeof(AudioManager), "StopAllSounds", new Type[] { })]
     internal static class AudioManagerStopLifecyclePatch
     {
@@ -28,8 +14,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
 
         private static void Postfix()
         {
-            if (!ConductorDriftRuntime.IsInternalTimelineRefresh)
-                AudioSyncLifecycleRuntime.NotifyStop("AudioManager.StopAllSounds", false);
+            AudioSyncLifecycleRuntime.NotifyStop("AudioManager.StopAllSounds", false);
         }
     }
 
@@ -43,8 +28,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
 
         private static void Prefix()
         {
-            if (!ConductorDriftRuntime.IsInternalTimelineRefresh)
-                AudioSyncLifecycleRuntime.NotifyStop("scrConductor.KillAllSounds", false);
+            AudioSyncLifecycleRuntime.NotifyStop("scrConductor.KillAllSounds", false);
         }
     }
 

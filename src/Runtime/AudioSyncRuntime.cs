@@ -10,7 +10,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             Idle,
             EditorPreparing,
             DeferredCaptured,
-            WaitingExtraFrames,
             WaitingRestartCooldown,
             InvokingGamePlay,
             Running,
@@ -24,7 +23,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static int deferredCheckpoint;
         private static bool deferredFlag;
         private static int playbackStartFloor;
-        private static int remainingFrames;
         private static int playRequestFrame;
         private static double playRequestRealtime;
         private static double editorPreparationMs;
@@ -65,7 +63,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 return state == GateState.EditorPreparing ||
                        state == GateState.DeferredCaptured ||
-                       state == GateState.WaitingExtraFrames ||
                        state == GateState.WaitingRestartCooldown ||
                        state == GateState.InvokingGamePlay;
             }
@@ -74,7 +71,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static string Status { get { return status; } }
         internal static string LastError { get { return lastError; } }
         internal static int PlaybackStartFloor { get { return playbackStartFloor; } }
-        internal static int RemainingFrames { get { return remainingFrames; } }
         internal static int PlayRequestFrame { get { return playRequestFrame; } }
         internal static double EditorPreparationMs { get { return editorPreparationMs; } }
         internal static double GamePlayCallMs { get { return gamePlayCallMs; } }
@@ -127,7 +123,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             lastError = string.Empty;
             callCaptured = false;
             capturedPlayCallCount = 0;
-            remainingFrames = 0;
 
             if (!Main.Enabled || Main.Settings == null || !Main.Settings.EnableStartGate || !gatePatchInstalled)
             {
@@ -219,16 +214,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 return;
             }
 
-            remainingFrames = Math.Max(0, Math.Min(3, Main.Settings.ExtraPreparationFrames));
-            if (remainingFrames == 0)
-            {
-                ContinueAfterPreparationFrames();
-            }
-            else
-            {
-                state = GateState.WaitingExtraFrames;
-                status = "追加準備フレーム待ち: " + remainingFrames;
-            }
+            ContinueAfterPreparationFrames();
         }
 
         internal static Exception NotifyEditorPlayFinalizer(Exception exception)
@@ -248,26 +234,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             if (!Main.Enabled || Main.Settings == null)
             {
                 CancelPending(false);
-                return;
-            }
-
-            if (state == GateState.WaitingExtraFrames)
-            {
-                if (!IsEditorStillValid())
-                {
-                    Fail("追加準備中にエディターが失われました。");
-                    return;
-                }
-
-                if (remainingFrames > 0)
-                {
-                    remainingFrames--;
-                    status = "追加準備フレーム待ち: " + remainingFrames;
-                }
-                if (remainingFrames <= 0)
-                {
-                    ContinueAfterPreparationFrames();
-                }
                 return;
             }
 
@@ -312,7 +278,12 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static void Reset(string reason)
         {
-            CancelPending(false);
+            Reset(reason, false);
+        }
+
+        internal static void Reset(string reason, bool invokePendingFallback)
+        {
+            CancelPending(invokePendingFallback);
             state = GateState.Idle;
             status = reason ?? "待機中";
             lastError = string.Empty;
@@ -433,7 +404,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             deferredGame = null;
             callCaptured = false;
-            remainingFrames = 0;
             remainingRestartCooldownMs = 0d;
             remainingRestartCleanupFrames = 0;
 
@@ -483,7 +453,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             deferredGame = null;
             callCaptured = false;
             capturedPlayCallCount = 0;
-            remainingFrames = 0;
             remainingRestartCooldownMs = 0d;
             remainingRestartCleanupFrames = 0;
             editor = null;
@@ -494,6 +463,12 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 {
                     invokingDeferredCall = true;
                     pending.Play(checkpoint, flag);
+                }
+                catch (Exception ex)
+                {
+                    lastError = "保留開始のフォールバックに失敗: " +
+                                ex.GetType().Name + ": " + ex.Message;
+                    if (Main.Logger != null) Main.Logger.Warning(lastError);
                 }
                 finally
                 {

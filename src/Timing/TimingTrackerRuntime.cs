@@ -129,6 +129,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
         private static TapAnalysis analysis;
         private static int factorShift;
         private static double firstTapAudioTime;
+        private static double firstTapPitch = 1d;
         private static double expectedStartDsp = -1d;
         private static string currentLevelIdentity = string.Empty;
         private static bool waitingForTapKey;
@@ -181,7 +182,10 @@ namespace Kiner.ADOFAIAudioSync.Timing
 
             bool control = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             if (control && Input.GetKeyDown(KeyCode.F6))
+            {
                 Main.Settings.TimingWindowVisible = !Main.Settings.TimingWindowVisible;
+                Main.SaveSettingsNow();
+            }
 
             if (control && Input.GetKeyDown(KeyCode.T))
                 ArmSelectedFloor();
@@ -213,7 +217,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             windowRect.x = Mathf.Clamp(windowRect.x, 0f, Mathf.Max(0f, Screen.width - 120f));
             windowRect.y = Mathf.Clamp(windowRect.y, 0f, Mathf.Max(0f, Screen.height - 60f));
             windowRect = GUI.Window(WindowId, windowRect, DrawWindowContents,
-                "ADOFAI BPM + Phase Tap Anchor v0.9.19");
+                "ADOFAI BPM + Phase Tap Anchor v0.9.20");
         }
 
         private static void DrawWindowContents(int id)
@@ -549,6 +553,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
                 analysis = null;
                 measurementApplied = false;
                 firstTapAudioTime = ReadAudioTime(source);
+                firstTapPitch = source.pitch > 0.0001f ? source.pitch : 1d;
                 expectedStartDsp = ResolveExpectedStartDsp();
                 state = CaptureState.Capturing;
             }
@@ -705,8 +710,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             double interceptStdError;
             CalculateRegressionErrors(usedX, usedY, intercept, period, out slopeStdError, out interceptStdError);
 
-            AudioSource source = GetActiveAudioSource();
-            double pitch = source != null && source.pitch > 0.0001f ? source.pitch : 1d;
+            double pitch = firstTapPitch > 0.0001d ? firstTapPitch : 1d;
             double sourcePulseBpm = audiblePulseBpm / pitch;
             double sourcePulseBpmStdError = 60d * slopeStdError / (period * period) / pitch;
 
@@ -875,6 +879,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             analysis = null;
             factorShift = 0;
             firstTapAudioTime = -1d;
+            firstTapPitch = 1d;
             expectedStartDsp = -1d;
             state = CaptureState.WaitingForFirstTap;
             measurementApplied = false;
@@ -1161,6 +1166,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             analysis = null;
             factorShift = 0;
             firstTapAudioTime = -1d;
+            firstTapPitch = 1d;
             expectedStartDsp = -1d;
             measurementApplied = false;
             if (clearTakes) savedTakes.Clear();
@@ -1174,9 +1180,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             scnEditor editor = scnEditor.instance;
             if (editor == null || editor.levelData == null || editor.floors == null) return;
 
-            string identity = editor.floors.Count + "|" +
-                              editor.levelData.bpm.ToString("R", CultureInfo.InvariantCulture) + "|" +
-                              editor.GetInstanceID();
+            string identity = EditorLevelIdentity.Resolve(editor);
             if (string.IsNullOrEmpty(currentLevelIdentity))
             {
                 currentLevelIdentity = identity;

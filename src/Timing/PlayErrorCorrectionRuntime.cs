@@ -83,7 +83,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
         {
             public int Floor;
             public double Bpm;
-            public bool IsRestore;
         }
 
         private static readonly List<HitSample> samples = new List<HitSample>();
@@ -99,7 +98,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
         private static bool applied;
         private static int appliedUpdatedCount;
         private static int appliedAddedCount;
-        private static int appliedRestoreCount;
         private static string levelIdentity = string.Empty;
 
         private static FieldInfo songField;
@@ -163,6 +161,37 @@ namespace Kiner.ADOFAIAudioSync.Timing
                             " / 有効ヒット: " + samples.Count +
                             " / Auto除外: " + skippedAutoHits);
 
+            if (Main.Settings != null)
+            {
+                GUILayout.Label("仮分割: " +
+                                Main.Settings.ErrorCorrectionWindowBeats.ToString("0.0") +
+                                "拍 / 最低ヒット数: " + Main.Settings.ErrorCorrectionMinSamples);
+                Main.Settings.ErrorCorrectionWindowBeats = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionWindowBeats, 2f, 32f);
+                Main.Settings.ErrorCorrectionMinSamples = Mathf.RoundToInt(
+                    GUILayout.HorizontalSlider(Main.Settings.ErrorCorrectionMinSamples, 3f, 30f));
+                GUILayout.Label("結合BPM差: " +
+                                Main.Settings.ErrorCorrectionMergeThresholdPercent.ToString("0.000") +
+                                "%以下 / 許容RMS: " +
+                                Main.Settings.ErrorCorrectionMaxRmsMs.ToString("0.0") + "ms");
+                Main.Settings.ErrorCorrectionMergeThresholdPercent = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionMergeThresholdPercent, 0.005f, 0.5f);
+                Main.Settings.ErrorCorrectionMaxRmsMs = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionMaxRmsMs, 10f, 150f);
+                GUILayout.Label("最小補正: " +
+                                Main.Settings.ErrorCorrectionMinChangePercent.ToString("0.000") +
+                                "% / 最大補正: ±" +
+                                Main.Settings.ErrorCorrectionMaxPercent.ToString("0.00") +
+                                "% / 適用強度: " +
+                                Main.Settings.ErrorCorrectionApplyStrengthPercent.ToString("0") + "%");
+                Main.Settings.ErrorCorrectionMinChangePercent = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionMinChangePercent, 0f, 0.2f);
+                Main.Settings.ErrorCorrectionMaxPercent = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionMaxPercent, 0.05f, 5f);
+                Main.Settings.ErrorCorrectionApplyStrengthPercent = GUILayout.HorizontalSlider(
+                    Main.Settings.ErrorCorrectionApplyStrengthPercent, 10f, 100f);
+            }
+
             GUILayout.BeginHorizontal();
             string buttonText = state == CaptureState.Recording
                 ? "記録を終了して解析"
@@ -184,7 +213,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             float applyStrength = Main.Settings == null ? 50f : Main.Settings.ErrorCorrectionApplyStrengthPercent;
             GUILayout.Label("一定の早押し・遅押しは無視し、誤差の傾きだけを使います。補正は1回あたり " +
                             applyStrength.ToString("0", CultureInfo.InvariantCulture) +
-                            "%だけ反映し、各有効区間の末尾で元のBPMへ復元します。");
+                            "%だけ反映し、補正後のBPMを後続へ継続します。");
             GUILayout.Label("旧版で適用後に悪化した譜面は、先にCtrl+Zまたはバックアップから戻してから再計測してください。");
 
             if (state == CaptureState.Completed)
@@ -197,8 +226,8 @@ namespace Kiner.ADOFAIAudioSync.Timing
                 int validCount = suggestions.Count(x => x.Valid);
                 string applyLabel = applied
                     ? "適用済み: 既存 " + appliedUpdatedCount + " 件更新 / 境界 " +
-                      appliedAddedCount + " 件追加（復元 " + appliedRestoreCount + " 件）"
-                    : "有効な " + validCount + " 区間を安全適用（区間末尾で元BPMへ復元）";
+                      appliedAddedCount + " 件追加"
+                    : "有効な " + validCount + " 区間を安全適用（補正BPMを後続へ継続）";
                 GUI.enabled = editor != null && validCount > 0 && !applied;
                 if (GUILayout.Button(applyLabel, GUILayout.Height(34f)))
                     ApplySuggestions(editor);
@@ -269,7 +298,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
             applied = false;
             appliedUpdatedCount = 0;
             appliedAddedCount = 0;
-            appliedRestoreCount = 0;
             levelIdentity = ResolveLevelIdentity();
             state = CaptureState.Armed;
             status = "次に始まるプレイを待機中";
@@ -287,7 +315,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
             applied = false;
             appliedUpdatedCount = 0;
             appliedAddedCount = 0;
-            appliedRestoreCount = 0;
             scnControllerSafe(out lastSeqId);
             state = CaptureState.Recording;
             status = "プレイ誤差を記録中";
@@ -383,7 +410,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
             applied = false;
             appliedUpdatedCount = 0;
             appliedAddedCount = 0;
-            appliedRestoreCount = 0;
 
             if (editor == null || editor.events == null || editor.floors == null ||
                 firstFloor < 0 || lastFloor <= firstFloor || samples.Count < 3)
@@ -764,7 +790,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             try
             {
                 // Snapshot the original effective BPM at every floor before touching any event.
-                // Every target and every restore boundary is derived from this immutable baseline.
+                // Every correction target is derived from this immutable baseline.
                 double[] originalEffectiveBpm = new double[editor.floors.Count];
                 for (int floor = 0; floor < originalEffectiveBpm.Length; floor++)
                     originalEffectiveBpm[floor] = EffectiveBpmAtFloor(editor, floor);
@@ -772,7 +798,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
                 Dictionary<LevelEvent, EventTarget> existingTargets =
                     new Dictionary<LevelEvent, EventTarget>();
                 List<BoundaryTarget> boundaryTargets = new List<BoundaryTarget>();
-                HashSet<int> restoreFloors = new HashSet<int>();
 
                 for (int i = 0; i < validRegions.Count; i++)
                 {
@@ -817,53 +842,16 @@ namespace Kiner.ADOFAIAudioSync.Timing
                             boundaryTargets.Add(new BoundaryTarget
                             {
                                 Floor = startFloor,
-                                Bpm = targetStartBpm,
-                                IsRestore = false
+                                Bpm = targetStartBpm
                             });
                         }
-                    }
-
-                    // A SetSpeed persists until the next speed event. The old implementation did not
-                    // restore the original BPM at the end of a valid region, so its correction leaked
-                    // into invalid gaps and the rest of the chart. Adjacent valid regions do not need
-                    // a restore because the next region writes its own boundary at the same floor.
-                    bool nextRegionContinues = i + 1 < validRegions.Count &&
-                                               validRegions[i + 1].Floor == endFloor;
-                    if (!nextRegionContinues && endFloor < editor.floors.Count)
-                    {
-                        double restoreBpm = originalEffectiveBpm[endFloor];
-                        List<LevelEvent> endEvents = editor.events.Where(x =>
-                                x.eventType == LevelEventType.SetSpeed &&
-                                x.floor == endFloor && IsZeroAngle(x))
-                            .OrderBy(x => editor.events.IndexOf(x))
-                            .ToList();
-
-                        if (endEvents.Count > 0)
-                        {
-                            existingTargets[endEvents[endEvents.Count - 1]] = new EventTarget
-                            {
-                                Bpm = restoreBpm,
-                                ForceAbsolute = false
-                            };
-                        }
-                        else if (IsFinitePositive(restoreBpm))
-                        {
-                            boundaryTargets.Add(new BoundaryTarget
-                            {
-                                Floor = endFloor,
-                                Bpm = restoreBpm,
-                                IsRestore = true
-                            });
-                        }
-                        restoreFloors.Add(endFloor);
                     }
                 }
 
-                // Deduplicate added boundaries. A restore takes precedence over a normal boundary only
-                // when both somehow resolve to the same floor; contiguous regions normally avoid this.
+                // Deduplicate correction boundaries that resolve to the same floor.
                 boundaryTargets = boundaryTargets
                     .GroupBy(x => x.Floor)
-                    .Select(group => group.OrderByDescending(x => x.IsRestore).First())
+                    .Select(group => group.First())
                     .OrderBy(x => x.Floor)
                     .ToList();
 
@@ -937,24 +925,15 @@ namespace Kiner.ADOFAIAudioSync.Timing
                         if (!ApproximatelyPercent(actual, expected, 0.05d))
                             validationWarnings++;
                     }
-                    foreach (int floor in restoreFloors)
-                    {
-                        if (floor < 0 || floor >= editor.floors.Count) continue;
-                        double actual = EffectiveBpmAtFloor(editor, floor);
-                        if (!ApproximatelyPercent(actual, originalEffectiveBpm[floor], 0.05d))
-                            validationWarnings++;
-                    }
-
                     editor.RemakePath(true, true);
                 }
 
                 applied = true;
                 appliedUpdatedCount = existingTargets.Count;
                 appliedAddedCount = boundaryTargets.Count;
-                appliedRestoreCount = restoreFloors.Count;
                 status = validationWarnings == 0
                     ? "安全適用完了: 既存" + appliedUpdatedCount + "件更新 / 境界" +
-                      appliedAddedCount + "件追加 / 復元" + appliedRestoreCount + "件"
+                      appliedAddedCount + "件追加 / 補正BPMは後続へ継続"
                     : "適用後検証で" + validationWarnings +
                       "件の不一致を検出しました。Ctrl+Zで戻してください";
 
@@ -1027,7 +1006,6 @@ namespace Kiner.ADOFAIAudioSync.Timing
             applied = false;
             appliedUpdatedCount = 0;
             appliedAddedCount = 0;
-            appliedRestoreCount = 0;
             levelIdentity = string.Empty;
         }
 
@@ -1036,8 +1014,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             scnEditor editor = scnEditor.instance;
             if (editor == null || editor.levelData == null || editor.floors == null)
                 return string.Empty;
-            return editor.GetInstanceID() + "|" + editor.floors.Count + "|" +
-                   editor.levelData.bpm.ToString("R", CultureInfo.InvariantCulture);
+            return EditorLevelIdentity.Resolve(editor);
         }
 
         private static void scnControllerSafe(out int seqId)
