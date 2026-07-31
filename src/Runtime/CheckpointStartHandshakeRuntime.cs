@@ -49,8 +49,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static double requestedLogicalSeconds;
         private static int requestedSample;
         private static int lastObservedSample;
-        private static int consecutiveMovingFrames;
-        private static int stagnantFramesAfterMotion;
+        private static int observedAudioUpdates;
         private static double attemptPreparationStartedRealtime;
         private static double attemptStartRealtime;
         private static double attemptTraceStartedRealtime;
@@ -102,7 +101,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static int CompletionCount { get { return completionCount; } }
         internal static int TimeoutCount { get { return timeoutCount; } }
         internal static int RetryCount { get { return retryCount; } }
-        internal static int ConsecutiveMovingFrames { get { return consecutiveMovingFrames; } }
+        internal static int ObservedAudioUpdates { get { return observedAudioUpdates; } }
         internal static int RequestedSample { get { return IsActive ? requestedSample : lastRequestedSample; } }
         internal static int CurrentSample { get { return IsActive ? ReadSampleSafe(source) : lastActualSample; } }
         internal static bool UsedTimeSamplesForSeek { get { return usedTimeSamplesForSeek; } }
@@ -154,8 +153,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 lastScheduleResidualMs = 0d;
                 lastExpectedSample = 0d;
                 attemptNumber = 0;
-                consecutiveMovingFrames = 0;
-                stagnantFramesAfterMotion = 0;
+                observedAudioUpdates = 0;
                 lastError = string.Empty;
 
                 BeginScheduledAttempt(false);
@@ -227,8 +225,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 }
                 state = HandshakeState.WaitingForStablePlayhead;
                 lastObservedSample = ReadSampleSafe(source);
-                consecutiveMovingFrames = 0;
-                stagnantFramesAfterMotion = 0;
+                observedAudioUpdates = 0;
                 AppendAttemptTrace("scheduled start reached");
             }
 
@@ -239,29 +236,29 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             int currentSample = ReadSampleSafe(source);
             int delta = currentSample - lastObservedSample;
-            if (!AudioListener.pause && ReadIsPlayingSafe(source) && delta > 0)
+            bool playheadIsRunning =
+                !AudioListener.pause && ReadIsPlayingSafe(source);
+            if (!playheadIsRunning || delta < 0)
             {
-                consecutiveMovingFrames++;
-                stagnantFramesAfterMotion = 0;
+                // A stop, pause, or backwards seek invalidates previously observed
+                // movement. Zero deltas do not: timeSamples advances on the audio
+                // buffer cadence (about 21 ms with the common 1024/48 kHz setup),
+                // while this method can run every 4 ms render frame.
+                observedAudioUpdates = 0;
             }
-            else if (consecutiveMovingFrames > 0)
+            else if (delta > 0)
             {
-                stagnantFramesAfterMotion++;
-                if (stagnantFramesAfterMotion > 1)
-                {
-                    consecutiveMovingFrames = 0;
-                    stagnantFramesAfterMotion = 0;
-                }
+                observedAudioUpdates++;
             }
             lastObservedSample = currentSample;
             AppendAttemptTrace(
                 "playhead sample delta=" + delta +
-                " stable=" + consecutiveMovingFrames +
+                " audioUpdates=" + observedAudioUpdates +
                 "/" + GetRequiredMovingFrames());
 
             int required = GetRequiredMovingFrames();
-            status = "途中再生: 開始サンプル確認 " + consecutiveMovingFrames + "/" + required;
-            if (consecutiveMovingFrames < required)
+            status = "途中再生: 音声更新確認 " + observedAudioUpdates + "/" + required;
+            if (observedAudioUpdates < required)
             {
                 return;
             }
@@ -345,8 +342,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             lastPlayheadCorrectionMs = 0d;
             lastScheduleResidualMs = 0d;
             lastExpectedSample = 0d;
-            consecutiveMovingFrames = 0;
-            stagnantFramesAfterMotion = 0;
+            observedAudioUpdates = 0;
             AttemptTrace.Length = 0;
         }
 
@@ -636,8 +632,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             lastObservedSample = sample;
             lastExpectedSample = sample;
             usedTimeSamplesForSeek = sampleSeeked;
-            consecutiveMovingFrames = 0;
-            stagnantFramesAfterMotion = 0;
+            observedAudioUpdates = 0;
             scheduledClipSeconds = SampleToSeconds(sample, clip);
             if (!IsFinite(scheduledClipSeconds))
             {
@@ -668,8 +663,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             AppendAttemptTrace("PlayScheduled submitted");
 
             lastObservedSample = requestedSample;
-            consecutiveMovingFrames = 0;
-            stagnantFramesAfterMotion = 0;
+            observedAudioUpdates = 0;
             state = HandshakeState.WaitingForScheduledStart;
             status = "途中再生: " + (attemptNumber > 0 ? "再予約" : "予約") +
                      " " + leadMs.ToString("0") + "ms先";
@@ -919,8 +913,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             requestedLogicalSeconds = 0d;
             requestedSample = 0;
             lastObservedSample = 0;
-            consecutiveMovingFrames = 0;
-            stagnantFramesAfterMotion = 0;
+            observedAudioUpdates = 0;
             attemptPreparationStartedRealtime = 0d;
             attemptStartRealtime = 0d;
             attemptTraceStartedRealtime = 0d;
@@ -1128,7 +1121,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
             StringBuilder builder = new StringBuilder(8192);
             builder.AppendLine(
-                "=== ADOFAI AudioSync v0.9.18 checkpoint schedule failure ===");
+                "=== ADOFAI AudioSync v0.9.19 checkpoint schedule failure ===");
             builder.Append("reason=").AppendLine(reason ?? "(none)");
             builder.Append("attempt=")
                 .Append(attemptNumber + 1)

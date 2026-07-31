@@ -86,7 +86,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 CheckpointStartHandshakeRuntime.LastScheduleResidualMs +
                 CheckpointStartHandshakeRuntime.LastPlayheadCorrectionMs;
             string text =
-                "AudioSync v0.9.18  " + (Main.Enabled ? "ON" : "OFF") +
+                "AudioSync v0.9.19  " + (Main.Enabled ? "ON" : "OFF") +
                 "  OGG:" + OggAudioCacheRuntime.CurrentUsageState + Environment.NewLine +
                 "Sync " + netSyncMs.ToString("+0.0;-0.0;0.0") +
                 "ms | Drift " +
@@ -106,7 +106,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 ? "-"
                 : AudioSyncRuntime.LastError;
             string text =
-                "ADOFAI AudioSync v0.9.18  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
+                "ADOFAI AudioSync v0.9.19  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
                 "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                 "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                 " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +
@@ -138,7 +138,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 " / sample actual " + CheckpointStartHandshakeRuntime.CurrentSample +
                 " / expected " + CheckpointStartHandshakeRuntime.ExpectedSample +
                 " / seek " + CheckpointStartHandshakeRuntime.RequestedSample +
-                " / stable " + CheckpointStartHandshakeRuntime.ConsecutiveMovingFrames +
+                " / audio updates " + CheckpointStartHandshakeRuntime.ObservedAudioUpdates +
                 "/" + Main.Settings.CheckpointStartStableFrames + Environment.NewLine +
                 "Countdown: " + CheckpointCountdownRuntime.Status +
                 " / 約" + CheckpointCountdownRuntime.CountdownSeconds.ToString("0.00") + "s" +

@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.18 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v0.9.19 bootstrap started.");
 
             try
             {
@@ -61,10 +61,10 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.18 loaded.");
+                Logger.Log("ADOFAI AudioSync v0.9.19 loaded.");
                 Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
-                           " (" + Settings.CheckpointStartStableFrames + " moving frame(s), timeout " +
+                           " (" + Settings.CheckpointStartStableFrames + " audio update(s), timeout " +
                            Settings.CheckpointStartTimeoutMs.ToString("0") + " ms).");
                 Logger.Log("Selected-floor playback keeps the original checkpoint and uses ADOFAI's stock same-floor angular takeoff.");
                 Logger.Log("Checkpoint schedule lead is " + Settings.CheckpointScheduleLeadMs.ToString("0") +
@@ -440,7 +440,7 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.18）");
+            GUILayout.Label("途中再生のDSP予約（v0.9.19）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 
@@ -456,7 +456,7 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.Label("開始失敗時の自動再予約回数: " + Settings.CheckpointScheduleRetryCount);
             Settings.CheckpointScheduleRetryCount = Mathf.RoundToInt(
                 GUILayout.HorizontalSlider(Settings.CheckpointScheduleRetryCount, 0f, 3f));
-            GUILayout.Label("開始確認に必要な連続移動フレーム: " + Settings.CheckpointStartStableFrames);
+            GUILayout.Label("開始確認に必要な音声更新回数: " + Settings.CheckpointStartStableFrames);
             Settings.CheckpointStartStableFrames = Mathf.RoundToInt(
                 GUILayout.HorizontalSlider(Settings.CheckpointStartStableFrames, 1f, 5f));
             GUILayout.Label("1回の開始待ちtimeout: " + Settings.CheckpointStartTimeoutMs.ToString("0") + "ms");
