@@ -28,7 +28,7 @@ namespace Kiner.ADOFAIAudioSync
             currentModEntry = modEntry;
             Logger = modEntry.Logger;
             ModPath = modEntry.Path;
-            Logger.Log("ADOFAI AudioSync v0.9.12 bootstrap started.");
+            Logger.Log("ADOFAI AudioSync v0.9.13 bootstrap started.");
 
             try
             {
@@ -40,6 +40,8 @@ namespace Kiner.ADOFAIAudioSync
                 Logger.Log("[2/5] Initializing runtimes...");
                 AudioSyncRuntime.Initialize();
                 CheckpointStartHandshakeRuntime.Initialize();
+                CheckpointCountdownRuntime.Initialize();
+                OggAudioCacheRuntime.Initialize();
                 AudioSyncPrewarmRuntime.Initialize();
                 TimingTrackerRuntime.Initialize();
                 PlayErrorCorrectionRuntime.Initialize();
@@ -59,7 +61,7 @@ namespace Kiner.ADOFAIAudioSync
                 modEntry.OnSaveGUI = OnSaveGUI;
                 modEntry.OnUnload = OnUnload;
 
-                Logger.Log("ADOFAI AudioSync v0.9.12 loaded.");
+                Logger.Log("ADOFAI AudioSync v0.9.13 loaded.");
                 Logger.Log("Selected-floor playback validates a future DSP reservation, then aligns once to the observed AudioSource playhead.");
                 Logger.Log("Checkpoint handshake is " + (Settings.EnableCheckpointStartHandshake ? "ON" : "OFF") +
                            " (" + Settings.CheckpointStartStableFrames + " moving frame(s), timeout " +
@@ -70,6 +72,12 @@ namespace Kiner.ADOFAIAudioSync
                 Logger.Log("Starts with an absolute schedule residual above " +
                            Settings.CheckpointMaxInitialAdvanceMs.ToString("0") +
                            " ms are automatically rescheduled.");
+                Logger.Log("Checkpoint countdown BPM folding is " +
+                           (Settings.EnableCheckpointCountdownFold ? "ON" : "OFF") +
+                           " (maximum " + Settings.CheckpointCountdownMaxBpm.ToString("0") + " BPM).");
+                Logger.Log("OGG memory cache is " +
+                           (Settings.EnableOggMemoryCache ? "ON" : "OFF") +
+                           " (maximum " + Settings.OggCacheMaxMegabytes + " MB).");
                 Logger.Log("Rapid restart guard is " + (Settings.EnableRapidRestartGuard ? "ON" : "OFF") +
                            " (minimum stop-to-start interval " + Settings.RapidRestartCooldownMs.ToString("0") + " ms).");
                 Logger.Log("Automatic drift correction is " + (Settings.AutoCorrectDrift ? "ON" : "OFF") + ".");
@@ -131,7 +139,7 @@ namespace Kiner.ADOFAIAudioSync
             {
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
                 AudioSyncRuntime.SetGatePatchInstalled(true);
-                Logger.Log("Harmony patches installed: editor preparation gate, checkpoint playhead handshake, lifecycle hooks, and hit-timeline diagnostics.");
+                Logger.Log("Harmony patches installed: editor preparation gate, checkpoint playhead handshake, countdown folding, OGG memory cache, lifecycle hooks, and hit-timeline diagnostics.");
             }
             catch (Exception ex)
             {
@@ -140,6 +148,7 @@ namespace Kiner.ADOFAIAudioSync
                 LogException("Harmony patches failed; tap measurement will continue, but start gate/alignment hooks are disabled", ex);
                 try { harmony.UnpatchAll(modEntry.Info.Id); } catch { }
                 AudioSyncRuntime.SetGatePatchInstalled(false);
+                OggAudioCacheRuntime.SetStreamOverridePatchInstalled(false);
             }
         }
 
@@ -276,6 +285,14 @@ namespace Kiner.ADOFAIAudioSync
                 Settings.EnableCheckpointVisualLeadIn = false;
                 Settings.SettingsRevision = 911;
             }
+            if (Settings.SettingsRevision < 913)
+            {
+                Settings.EnableCheckpointCountdownFold = true;
+                Settings.CheckpointCountdownMaxBpm = 240f;
+                Settings.EnableOggMemoryCache = true;
+                Settings.OggCacheMaxMegabytes = 512;
+                Settings.SettingsRevision = 913;
+            }
             if (Settings.TapPhaseIgnoreMs < 0f) Settings.TapPhaseIgnoreMs = 0f;
             if (Settings.TapPhaseIgnoreMs > 100f) Settings.TapPhaseIgnoreMs = 100f;
             if (Settings.TapPhaseMaxCorrectionPercent < 0.1f) Settings.TapPhaseMaxCorrectionPercent = 0.1f;
@@ -302,6 +319,10 @@ namespace Kiner.ADOFAIAudioSync
             if (Settings.CheckpointScheduleRetryCount > 3) Settings.CheckpointScheduleRetryCount = 3;
             if (Settings.CheckpointVisualPrerollMs < 50f) Settings.CheckpointVisualPrerollMs = 50f;
             if (Settings.CheckpointVisualPrerollMs > 750f) Settings.CheckpointVisualPrerollMs = 750f;
+            if (Settings.CheckpointCountdownMaxBpm < 60f) Settings.CheckpointCountdownMaxBpm = 60f;
+            if (Settings.CheckpointCountdownMaxBpm > 600f) Settings.CheckpointCountdownMaxBpm = 600f;
+            if (Settings.OggCacheMaxMegabytes < 64) Settings.OggCacheMaxMegabytes = 64;
+            if (Settings.OggCacheMaxMegabytes > 4096) Settings.OggCacheMaxMegabytes = 4096;
             if (Settings.ErrorCorrectionMinSamples < 3) Settings.ErrorCorrectionMinSamples = 3;
             if (Settings.ErrorCorrectionMinSamples > 100) Settings.ErrorCorrectionMinSamples = 100;
             if (Settings.ErrorCorrectionMaxPercent < 0.01f) Settings.ErrorCorrectionMaxPercent = 0.01f;
@@ -355,14 +376,17 @@ namespace Kiner.ADOFAIAudioSync
             Enabled = value;
             AudioSyncRuntime.Reset(value ? "Mod有効" : "Mod無効");
             CheckpointStartHandshakeRuntime.Reset(value ? "Mod有効" : "Mod無効");
+            CheckpointCountdownRuntime.Reset(value ? "Mod有効" : "Mod無効");
             if (!value)
             {
                 TimingTrackerRuntime.CloseWindow();
                 PlayErrorCorrectionRuntime.Shutdown();
                 AudioSyncLifecycleRuntime.NotifyStop("Mod disabled", false);
+                OggAudioCacheRuntime.Clear("Mod無効");
             }
             else
             {
+                OggAudioCacheRuntime.Initialize();
                 PlayErrorCorrectionRuntime.Initialize();
                 AudioSyncPrewarmRuntime.Restart();
                 ConductorDriftRuntime.ResetBaseline("Mod enabled");
@@ -380,7 +404,7 @@ namespace Kiner.ADOFAIAudioSync
                 "開始ゲートの診断表示を画面左上へ表示する");
 
             GUILayout.Space(8f);
-            GUILayout.Label("途中再生のDSP予約（v0.9.12）");
+            GUILayout.Label("途中再生のDSP予約（v0.9.13）");
             GUILayout.Label("選択床とcheckpointを維持したまま、予約時刻と期待サンプルを固定します。");
             GUILayout.Label("開始確認に使ったフレーム時間は誤差判定から除外します。");
 
@@ -411,6 +435,64 @@ namespace Kiner.ADOFAIAudioSync
                             " / 完了 " + CheckpointStartHandshakeRuntime.CompletionCount +
                             " / timeout " + CheckpointStartHandshakeRuntime.TimeoutCount);
             GUILayout.Label("最終dspTimeSong確定後に、本体PlayHitTimesを1回だけ構築します。別Modは操作しません。");
+
+            GUILayout.Space(8f);
+            GUILayout.Label("高BPMの途中再生カウントダウン");
+            bool countdownFoldWasEnabled = Settings.EnableCheckpointCountdownFold;
+            Settings.EnableCheckpointCountdownFold = GUILayout.Toggle(
+                Settings.EnableCheckpointCountdownFold,
+                "カウントダウンBPMを2の累乗で折りたたむ");
+            if (countdownFoldWasEnabled && !Settings.EnableCheckpointCountdownFold)
+            {
+                CheckpointCountdownRuntime.Reset("設定OFF");
+            }
+            GUILayout.Label("折りたたみ後の上限: " +
+                            Settings.CheckpointCountdownMaxBpm.ToString("0") + " BPM");
+            Settings.CheckpointCountdownMaxBpm = GUILayout.HorizontalSlider(
+                Settings.CheckpointCountdownMaxBpm, 120f, 480f);
+            GUILayout.Label("状態: " + CheckpointCountdownRuntime.Status);
+            if (CheckpointCountdownRuntime.OriginalBpm > 0f)
+            {
+                GUILayout.Label(
+                    "直近: " + CheckpointCountdownRuntime.OriginalBpm.ToString("0.0") +
+                    " → " + CheckpointCountdownRuntime.FoldedBpm.ToString("0.0") +
+                    " BPM / ÷" + CheckpointCountdownRuntime.Divisor +
+                    " / 約" + CheckpointCountdownRuntime.CountdownSeconds.ToString("0.00") + "秒");
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("OGGメモリキャッシュ");
+            bool oggCacheWasEnabled = Settings.EnableOggMemoryCache;
+            Settings.EnableOggMemoryCache = GUILayout.Toggle(
+                Settings.EnableOggMemoryCache,
+                "OGGを初回ロード時にメモリ展開し、再生開始時に再利用する");
+            if (oggCacheWasEnabled && !Settings.EnableOggMemoryCache)
+            {
+                OggAudioCacheRuntime.Clear("設定OFF");
+            }
+            int previousOggCacheLimit = Settings.OggCacheMaxMegabytes;
+            GUILayout.Label("キャッシュ上限: " + Settings.OggCacheMaxMegabytes + " MB");
+            Settings.OggCacheMaxMegabytes = Mathf.RoundToInt(
+                GUILayout.HorizontalSlider(Settings.OggCacheMaxMegabytes, 64f, 2048f));
+            if (previousOggCacheLimit != Settings.OggCacheMaxMegabytes)
+            {
+                OggAudioCacheRuntime.TrimToConfiguredBudget();
+            }
+            GUILayout.Label(
+                "状態: " + OggAudioCacheRuntime.Status +
+                " / " + OggAudioCacheRuntime.EntryCount + "件 " +
+                OggAudioCacheRuntime.EstimatedMegabytes.ToString("0.0") + " MB" +
+                " / hit " + OggAudioCacheRuntime.HitCount +
+                " / miss " + OggAudioCacheRuntime.MissCount +
+                " / evict " + OggAudioCacheRuntime.EvictionCount);
+            GUILayout.Label(
+                "非ストリーミング化patch: " +
+                (OggAudioCacheRuntime.StreamOverridePatchInstalled ? "OK" : "NG") +
+                " / 適用ロード " + OggAudioCacheRuntime.StreamOverrideCount);
+            if (GUILayout.Button("OGGキャッシュを消去"))
+            {
+                OggAudioCacheRuntime.Clear("手動消去");
+            }
 
             GUILayout.Space(8f);
             GUILayout.Label("高速再開ガード");
@@ -583,6 +665,8 @@ namespace Kiner.ADOFAIAudioSync
         private static bool OnUnload(UnityModManager.ModEntry modEntry)
         {
             Enabled = false;
+            try { OggAudioCacheRuntime.Shutdown(); } catch { }
+            try { CheckpointCountdownRuntime.Shutdown(); } catch { }
             try { AudioSyncPrewarmRuntime.Shutdown(); } catch { }
             try { TimingTrackerRuntime.Shutdown(); } catch { }
             try { PlayErrorCorrectionRuntime.Shutdown(); } catch { }
@@ -603,6 +687,8 @@ namespace Kiner.ADOFAIAudioSync
 
         private static void CleanupAfterFailedLoad(UnityModManager.ModEntry modEntry)
         {
+            try { OggAudioCacheRuntime.Shutdown(); } catch { }
+            try { CheckpointCountdownRuntime.Shutdown(); } catch { }
             try { AudioSyncPrewarmRuntime.Shutdown(); } catch { }
             try { AudioSyncLifecycleRuntime.Shutdown(); } catch { }
             try { CheckpointStartHandshakeRuntime.Shutdown(); } catch { }

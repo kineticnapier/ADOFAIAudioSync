@@ -360,7 +360,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             AudioListener.pause = true;
             try { source.Stop(); } catch { }
 
-            double countdownSeconds = GetStockScrubCountdownSeconds(conductor);
+            double countdownSeconds = GetScrubCountdownSeconds(conductor);
             double clipSeconds = requestedLogicalSeconds + conductor.addoffset - countdownSeconds;
             clipSeconds = ClampClipSeconds(clipSeconds, clip);
             int sample = SecondsToSample(clipSeconds, clip);
@@ -415,7 +415,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 actualClipSeconds = source.time;
             }
 
-            double countdownSeconds = GetStockScrubCountdownSeconds(instance);
+            double countdownSeconds = GetScrubCountdownSeconds(instance);
             double scheduledOrigin =
                 scheduledStartDsp - (scheduledClipSeconds + countdownSeconds) / pitch;
             double finalOrigin =
@@ -679,11 +679,16 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             return milliseconds.ToString("+0.0;-0.0;0.0") + "ms";
         }
 
-        private static double GetStockScrubCountdownSeconds(scrConductor instance)
+        private static double GetScrubCountdownSeconds(scrConductor instance)
         {
-            return instance.separateCountdownTime
-                ? instance.crotchetAtStart * (double)instance.countdownTicks
-                : 0d;
+            if (!instance.separateCountdownTime)
+            {
+                return 0d;
+            }
+            double multiplier = Math.Max(
+                0.0001d,
+                Math.Abs((double)instance.countdownSpeedMultiplier));
+            return instance.crotchetAtStart * (double)instance.countdownTicks / multiplier;
         }
 
         private static double ClampClipSeconds(double seconds, AudioClip audioClip)

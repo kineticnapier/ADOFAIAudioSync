@@ -24,6 +24,11 @@ namespace Kiner.ADOFAIAudioSync
         // residual between the observed sample and the sample expected from the DSP schedule.
         public float CheckpointMaxInitialAdvanceMs = 50.0f;
         public int CheckpointScheduleRetryCount = 1;
+        public bool EnableCheckpointCountdownFold = true;
+        public float CheckpointCountdownMaxBpm = 240.0f;
+
+        public bool EnableOggMemoryCache = true;
+        public int OggCacheMaxMegabytes = 512;
 
         // Legacy v0.9.6 fields retained only so old Settings.xml files deserialize cleanly.
         // The current handshake never changes the checkpoint floor and does not use these values.

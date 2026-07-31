@@ -13,6 +13,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
     {
         private static void Prefix(scnEditor __instance)
         {
+            CheckpointCountdownRuntime.BeginEditorPlay();
             AudioSyncRuntime.NotifyEditorPlayPrefix(
                 __instance,
                 AudioSyncRuntime.ResolveStartFloor(__instance));

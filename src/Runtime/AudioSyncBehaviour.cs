@@ -44,6 +44,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             float frameMs = Time.unscaledDeltaTime * 1000f;
             if (frameMs > largestHitchMs) largestHitchMs = frameMs;
 
+            OggAudioCacheRuntime.Update();
             AudioSyncPrewarmRuntime.Update();
             AudioSyncRuntime.UpdateFrame();
             ConductorDriftRuntime.Update();
@@ -61,7 +62,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 EnsureStyles();
                 string error = string.IsNullOrEmpty(AudioSyncRuntime.LastError) ? "-" : AudioSyncRuntime.LastError;
                 string text =
-                    "ADOFAI AudioSync v0.9.12  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
+                    "ADOFAI AudioSync v0.9.13  [Ctrl+F8 Gate / Ctrl+F9 Overlay]" + Environment.NewLine +
                     "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
                     "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
                     " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +
@@ -89,6 +90,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     " / seek " + CheckpointStartHandshakeRuntime.RequestedSample +
                     " / stable " + CheckpointStartHandshakeRuntime.ConsecutiveMovingFrames +
                     "/" + Main.Settings.CheckpointStartStableFrames + Environment.NewLine +
+                    "Countdown: " + CheckpointCountdownRuntime.Status +
+                    " / 約" + CheckpointCountdownRuntime.CountdownSeconds.ToString("0.00") + "s" +
+                    Environment.NewLine +
+                    "OGG cache: " + OggAudioCacheRuntime.Status +
+                    " / " + OggAudioCacheRuntime.EntryCount + "件 " +
+                    OggAudioCacheRuntime.EstimatedMegabytes.ToString("0.0") + "MB" +
+                    " / hit " + OggAudioCacheRuntime.HitCount +
+                    " miss " + OggAudioCacheRuntime.MissCount + Environment.NewLine +
                     "Drift: " + ConductorDriftRuntime.Status +
                     " / 自動 " + (Main.Settings.AutoCorrectDrift ? "ON" : "OFF") + Environment.NewLine +
                     "raw " + ConductorDriftRuntime.CurrentRawOffsetMs.ToString("+0.0;-0.0;0.0") +
@@ -108,8 +117,8 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     "ms / max " + largestHitchMs.ToString("0.0") + "ms" + Environment.NewLine +
                     "エラー: " + error;
 
-                GUI.Box(new Rect(12f, 12f, 760f, 500f), GUIContent.none, boxStyle);
-                GUI.Label(new Rect(24f, 22f, 736f, 480f), text, labelStyle);
+                GUI.Box(new Rect(12f, 12f, 760f, 550f), GUIContent.none, boxStyle);
+                GUI.Label(new Rect(24f, 22f, 736f, 530f), text, labelStyle);
             }
 
             TimingTrackerRuntime.DrawWindow();

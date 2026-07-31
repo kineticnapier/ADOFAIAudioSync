@@ -33,9 +33,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 lastReason != "scrConductor.KillAllSounds")
             {
                 CheckpointStartHandshakeRuntime.NotifyStop(lastReason);
+                CheckpointCountdownRuntime.Reset(lastReason);
             }
             ConductorDriftRuntime.NotifyLifecycleStop(lastReason);
             DspProbeCueRuntime.StopAll(lastReason, destroyAudioObjects);
+            OggAudioCacheRuntime.NotifyLifecycleStop();
             if (destroyAudioObjects && Main.Enabled) AudioSyncPrewarmRuntime.Restart();
         }
 

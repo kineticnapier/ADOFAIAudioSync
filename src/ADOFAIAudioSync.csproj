@@ -52,8 +52,11 @@
     <Compile Include="Patches\EditorPlaybackLifecyclePatch.cs" />
     <Compile Include="Patches\AudioLifecycleAndTimingPatches.cs" />
     <Compile Include="Patches\CheckpointStartHandshakePatches.cs" />
+    <Compile Include="Patches\PlaybackComfortPatches.cs" />
     <Compile Include="Runtime\AudioSyncRuntime.cs" />
     <Compile Include="Runtime\CheckpointStartHandshakeRuntime.cs" />
+    <Compile Include="Runtime\CheckpointCountdownRuntime.cs" />
+    <Compile Include="Runtime\OggAudioCacheRuntime.cs" />
     <Compile Include="Runtime\AudioSyncBehaviour.cs" />
     <Compile Include="Runtime\AudioSyncPrewarmRuntime.cs" />
     <Compile Include="Runtime\AudioSyncLifecycleRuntime.cs" />
