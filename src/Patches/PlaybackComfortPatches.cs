@@ -41,6 +41,54 @@ namespace Kiner.ADOFAIAudioSync.Patches
             CheckpointCountdownRuntime.EndScrub(__state);
             return __exception;
         }
+
+        private static IEnumerable<CodeInstruction> Transpiler(
+            IEnumerable<CodeInstruction> instructions)
+        {
+            List<CodeInstruction> result =
+                new List<CodeInstruction>(instructions);
+            FieldInfo crotchetField = AccessTools.Field(
+                typeof(scrConductor),
+                "crotchetAtStart");
+            MethodInfo helper = AccessTools.Method(
+                typeof(CheckpointCountdownRuntime),
+                "GetScrubLeadInCrotchet");
+
+            int firstRead = -1;
+            int readCount = 0;
+            for (int i = 0; i < result.Count; i++)
+            {
+                CodeInstruction instruction = result[i];
+                if (instruction.opcode != OpCodes.Ldfld ||
+                    !object.Equals(instruction.operand, crotchetField))
+                {
+                    continue;
+                }
+
+                if (firstRead < 0)
+                {
+                    firstRead = i;
+                }
+                readCount++;
+            }
+
+            // In the supported game build scrController.Scrub has exactly two
+            // direct reads. The first computes the planetary lead-in; the second
+            // computes the absolute scrub-time lower bound. Replace only the first.
+            bool installed =
+                crotchetField != null &&
+                helper != null &&
+                readCount == 2 &&
+                firstRead >= 0;
+            if (installed)
+            {
+                result[firstRead].opcode = OpCodes.Call;
+                result[firstRead].operand = helper;
+            }
+
+            CheckpointCountdownRuntime.SetScrubLeadInPatchInstalled(installed);
+            return result;
+        }
     }
 
     [HarmonyPatch(typeof(scrConductor), "PlayHitTimes", new Type[] { })]

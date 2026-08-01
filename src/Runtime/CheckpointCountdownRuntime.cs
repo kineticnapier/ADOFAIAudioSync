@@ -37,6 +37,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static double synchronizationCountdownSeconds;
         private static ScrubScope activeScrubScope;
         private static bool checkpointCountdownActive;
+        private static bool scrubLeadInPatchInstalled;
         private static bool waitBeatsTimelinePatchInstalled;
 
         internal static string Status { get { return status; } }
@@ -49,9 +50,14 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         {
             get { return waitBeatsTimelinePatchInstalled; }
         }
+        internal static bool ScrubLeadInPatchInstalled
+        {
+            get { return scrubLeadInPatchInstalled; }
+        }
 
         internal static void Initialize()
         {
+            scrubLeadInPatchInstalled = false;
             waitBeatsTimelinePatchInstalled = false;
             Reset("待機中");
         }
@@ -144,17 +150,37 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     divisor *= 2;
                 }
 
+                // Never fall back to changing crotchetAtStart for the whole Scrub call.
+                // Stock scrController.Scrub also uses that field as an absolute lower
+                // bound for the scrub time. At 3200 BPM, changing 0.300 s to 4.800 s
+                // turns that bound into 4.800 * 4 = 19.200 s and seeks far beyond the
+                // selected floor. If the targeted lead-in patch is unavailable, keep
+                // the complete stock countdown instead of risking a forward jump.
+                if (divisor > 1 && !scrubLeadInPatchInstalled)
+                {
+                    foldedBpm = originalBpm;
+                    divisor = 1;
+                    status = "助走分離patchなし: 本体カウントダウン";
+                    if (Main.Logger != null)
+                    {
+                        Main.Logger.Warning(
+                            "Checkpoint countdown folding was skipped because the " +
+                            "targeted scrController.Scrub lead-in patch is unavailable.");
+                    }
+                    return null;
+                }
+
                 // scrController.Scrub uses countdownSpeedMultiplier for one part of
                 // the checkpoint calculation, but its planetary lead-in calculation
                 // reads crotchetAtStart directly. Applying only the multiplier makes
                 // early countdown numbers elapse before the planets are positioned,
                 // leaving only "1" visible.
                 //
-                // During Scrub, transfer the same scale into crotchetAtStart and keep
-                // the multiplier at 1. This makes every stock Scrub calculation use
-                // the same extended duration. Restore the original crotchet immediately
-                // afterward and apply the multiplier for the live countdown. Planet
-                // angular velocity therefore continues to use the chart's original BPM.
+                // Keep the real crotchet untouched. A targeted transpiler changes only
+                // the first crotchetAtStart read in scrController.Scrub: the read used
+                // for the planetary lead-in. The later read that establishes the
+                // absolute scrub-time lower bound remains stock. After Scrub, apply the
+                // multiplier for the live countdown ticks.
                 double originalCrotchet = activeConductor.crotchetAtStart;
                 CaptureSynchronizationCountdown(
                     activeConductor,
@@ -164,14 +190,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     originalCrotchet,
                     multiplier);
                 activeScrubScope = scope;
-                if (multiplier < 0.9999f &&
-                    originalCrotchet > 0d &&
-                    !double.IsNaN(originalCrotchet) &&
-                    !double.IsInfinity(originalCrotchet))
-                {
-                    activeConductor.crotchetAtStart =
-                        originalCrotchet / multiplier;
-                }
                 activeConductor.countdownSpeedMultiplier = 1f;
 
                 int ticks = Math.Max(1, activeConductor.countdownTicks);
@@ -189,8 +207,12 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         ", foldedBpm=" + foldedBpm.ToString("0.0") +
                         ", divisor=" + divisor +
                         ", duration=" + countdownSeconds.ToString("0.000") + " s" +
-                        ", scrubCrotchet=" +
-                        activeConductor.crotchetAtStart.ToString("0.000000") + " s.");
+                        ", conductorCrotchet=" +
+                        activeConductor.crotchetAtStart.ToString("0.000000") + " s" +
+                        ", leadInCrotchet=" +
+                        GetScrubLeadInCrotchet(activeConductor).ToString("0.000000") + " s" +
+                        ", minimumScrubTime=" +
+                        (originalCrotchet * ticks).ToString("0.000000") + " s.");
                 }
                 return scope;
             }
@@ -225,7 +247,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 }
                 if (scope.Conductor != null)
                 {
-                    scope.Conductor.crotchetAtStart = scope.OriginalCrotchet;
                     scope.Conductor.countdownSpeedMultiplier =
                         scope.FinalMultiplier;
                     checkpointCountdownActive =
@@ -244,6 +265,31 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         "Checkpoint countdown restore failed: " + ex);
                 }
             }
+        }
+
+        /// <summary>
+        /// Used only for the planetary lead-in read inside scrController.Scrub.
+        /// The conductor's actual crotchetAtStart is never changed.
+        /// </summary>
+        internal static double GetScrubLeadInCrotchet(
+            scrConductor activeConductor)
+        {
+            if (activeConductor == null)
+            {
+                return 0d;
+            }
+
+            double crotchet = activeConductor.crotchetAtStart;
+            ScrubScope scope = activeScrubScope;
+            if (scope == null || scope.Restored ||
+                !object.ReferenceEquals(scope.Conductor, activeConductor))
+            {
+                return crotchet;
+            }
+
+            float multiplier = GetSafeMultiplier(scope.FinalMultiplier);
+            double scaled = scope.OriginalCrotchet / multiplier;
+            return IsFinitePositive(scaled) ? scaled : crotchet;
         }
 
         /// <summary>
@@ -274,22 +320,21 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     activeConductor.countdownSpeedMultiplier);
             }
 
-            // During scrController.Scrub, crotchetAtStart is temporarily divided
-            // by FinalMultiplier so the stock planet lead-in begins early enough.
-            // Cancel that temporary scale for Pause/Wait Beats scheduling. After
-            // Scrub, the original crotchet is already restored, so a multiplier
-            // of 1 keeps those ticks at the chart's normal BPM.
-            ScrubScope scope = activeScrubScope;
-            if (scope != null &&
-                !scope.Restored &&
-                object.ReferenceEquals(scope.Conductor, activeConductor))
-            {
-                float finalMultiplier = GetSafeMultiplier(
-                    scope.FinalMultiplier);
-                return 1f / finalMultiplier;
-            }
-
+            // The targeted Scrub patch scales only the planetary lead-in read;
+            // crotchetAtStart itself remains stock. Returning 1 therefore keeps
+            // Pause/Wait Beats scheduling at the chart's normal speed.
             return 1f;
+        }
+
+        internal static void SetScrubLeadInPatchInstalled(bool installed)
+        {
+            scrubLeadInPatchInstalled = installed;
+            if (!installed && Main.Logger != null)
+            {
+                Main.Logger.Warning(
+                    "The scrController.Scrub crotchet read pattern was not found; " +
+                    "checkpoint countdown folding will fail closed.");
+            }
         }
 
         internal static void SetWaitBeatsTimelinePatchInstalled(bool installed)
@@ -419,6 +464,11 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static bool IsFinitePositive(float value)
         {
             return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static bool IsFinitePositive(double value)
+        {
+            return value > 0d && !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         private static float GetSafeMultiplier(float value)

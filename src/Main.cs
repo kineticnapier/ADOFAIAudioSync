@@ -406,6 +406,11 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.Label(
                 "OFFなら途中再生開始だけを折りたたみ、譜面中の待機ビートは元の間隔を使います。");
             GUILayout.Label(
+                "途中再生助走分離patch: " +
+                (CheckpointCountdownRuntime.ScrubLeadInPatchInstalled
+                    ? "OK"
+                    : "NG（折りたたみを自動停止）"));
+            GUILayout.Label(
                 "待機ビート分離patch: " +
                 (CheckpointCountdownRuntime.WaitBeatsTimelinePatchInstalled
                     ? "OK"
