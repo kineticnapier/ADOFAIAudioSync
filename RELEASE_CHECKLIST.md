@@ -1,13 +1,13 @@
-# v1.0.0 Release Checklist
+# v1.0.0 Release Verification
 
-v0.9.24をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
+v1.0.0をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
 
 ## Build and package
 
 - [ ] `build.ps1`のReleaseビルドが警告・エラーなしで完了する
-- [ ] `artifacts/ADOFAIAudioSync-v0.9.24.zip`が生成される
+- [ ] `artifacts/ADOFAIAudioSync-v1.0.0.zip`が生成される
 - [ ] ZIP内が`ADOFAIAudioSync/ADOFAIAudioSync.dll`と`ADOFAIAudioSync/Info.json`だけである
-- [ ] `Info.json`とオーバーレイの版が`0.9.24`で一致する
+- [ ] `Info.json`とオーバーレイの版が`1.0.0`で一致する
 - [ ] 旧`Settings.xml`を残した更新でも起動する
 
 ## Playback
@@ -46,9 +46,9 @@ v0.9.24をReleaseビルドし、同じDLLで次を確認します。問題が出
 途中再生が失敗した場合、次の区切りを含む範囲をそのまま保存します。
 
 ```text
-=== ADOFAI AudioSync v0.9.24 checkpoint schedule failure ===
+=== ADOFAI AudioSync v1.0.0 checkpoint schedule failure ===
 ...
 === end checkpoint schedule failure ===
 ```
 
-全項目が通り、重大な新規不具合がなければ、機能を追加せず版番号だけ`1.0.0`へ更新します。
+正式配布前に、未確認の項目を実ゲーム上で完了させます。
