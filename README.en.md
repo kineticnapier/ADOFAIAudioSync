@@ -1,6 +1,6 @@
 # ADOFAI AudioSync
 
-[日本語](README.md) | [English](README.en.md)
+[日本語](README.md) | [English](README.en.md) | [한국어](README.ko.md)
 
 ADOFAI AudioSync is a Unity Mod Manager mod that stabilizes playback in the A Dance of Fire and Ice editor. It mainly targets starts from a selected floor, reducing delayed audio starts, chart/audio desynchronization, and large jumps to an unintended position. It also includes a BPM and phase tap anchor tool and an experimental tool that estimates speed changes from play errors.
 
