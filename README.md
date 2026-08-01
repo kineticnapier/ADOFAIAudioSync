@@ -1,6 +1,6 @@
 # ADOFAI AudioSync
 
-[日本語](README.md) | [English](README.en.md)
+[日本語](README.md) | [English](README.en.md) | [한국어](README.ko.md)
 
 ADOFAIのエディター再生を安定させるUnity Mod Manager用Modです。特に、選択した床から再生したときに音源の開始が遅れる、譜面と音がずれる、開始位置が大きく飛ぶといった問題を抑えます。譜面制作を補助するBPM・位相タップアンカーと、プレイ結果から速度変化を推定する実験機能も含みます。
 
