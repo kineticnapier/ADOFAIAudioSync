@@ -5,7 +5,9 @@ namespace Kiner.ADOFAIAudioSync
     public sealed class AudioSyncSettings : UnityModManager.ModSettings
     {
         public int SettingsRevision = 0;
-        public bool EnableStartGate = true;
+        // Legacy v0.9.22 field retained so existing Settings.xml files migrate cleanly.
+        // v0.9.23 never suppresses or reinvokes scnGame.Play.
+        public bool EnableStartGate = false;
         // Legacy v0.9.16 field retained so existing Settings.xml files migrate cleanly.
         public bool ShowOverlay = false;
         // 0 = off, 1 = compact, 2 = detailed diagnostics.

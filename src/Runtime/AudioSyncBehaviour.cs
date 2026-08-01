@@ -16,15 +16,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             if (Main.Settings == null) return;
 
             bool control = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (control && Input.GetKeyDown(KeyCode.F8))
-            {
-                Main.Settings.EnableStartGate = !Main.Settings.EnableStartGate;
-                AudioSyncRuntime.Reset(
-                    Main.Settings.EnableStartGate ? "開始ゲートON" : "開始ゲートOFF",
-                    !Main.Settings.EnableStartGate);
-                Main.Logger.Log("Deferred editor start gate: " + Main.Settings.EnableStartGate);
-                Main.SaveSettingsNow();
-            }
             if (control && Input.GetKeyDown(KeyCode.F9))
             {
                 Main.Settings.OverlayMode =
@@ -88,9 +79,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 : AudioSyncRuntime.LastError;
             string text =
                 "ADOFAI AudioSync v" + Main.Version +
-                "  [Ctrl+F8 Gate / Ctrl+F9: 詳細]" + Environment.NewLine +
+                "  [Ctrl+F9: 詳細]" + Environment.NewLine +
                 "開始: " + AudioSyncRuntime.Status + Environment.NewLine +
-                "Gate: " + (Main.Settings.EnableStartGate ? "ON" : "OFF") +
+                "Play観測: " + (AudioSyncRuntime.CallCaptured ? "OK" : "WAIT") +
                 " / 選択床 " + AudioSyncRuntime.PlaybackStartFloor +
                 " / 本体checkpoint " + AudioSyncRuntime.ActualPlaybackStartFloor +
                 " / patch " + (AudioSyncRuntime.GatePatchInstalled ? "OK" : "NG") + Environment.NewLine +

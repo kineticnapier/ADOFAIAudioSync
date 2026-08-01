@@ -137,8 +137,8 @@ namespace Kiner.ADOFAIAudioSync
             OggAudioCacheRuntime.SetStreamOverridePatchInstalled(false);
 
             bool editorLifecycle = TryPatchClass(typeof(EditorPlayLifecyclePatch));
-            bool gameStartGate = TryPatchClass(typeof(GamePlayStartGatePatch));
-            AudioSyncRuntime.SetGatePatchInstalled(editorLifecycle && gameStartGate);
+            bool gameStartObservation = TryPatchClass(typeof(GamePlayStartObservationPatch));
+            AudioSyncRuntime.SetGatePatchInstalled(editorLifecycle && gameStartObservation);
 
             TryPatchClass(typeof(EditorStopLifecyclePatch));
             TryPatchClass(typeof(CheckpointScrubHandshakePatch));
@@ -153,7 +153,7 @@ namespace Kiner.ADOFAIAudioSync
             TryPatchClass(typeof(ExternalOggCachePatch));
             TryPatchClass(typeof(ExternalOggNonStreamingPatch));
 
-            Logger.Log("Harmony patches processed independently: editor gate, checkpoint handshake, countdown folding, OGG cache, and lifecycle hooks.");
+            Logger.Log("Harmony patches processed independently: stock Play observation, checkpoint handshake, countdown folding, OGG cache, and lifecycle hooks.");
         }
 
         private static bool TryPatchClass(Type patchType)
@@ -256,6 +256,13 @@ namespace Kiner.ADOFAIAudioSync
                 // XML elements are ignored by UMM, so only advance the settings revision.
                 Settings.SettingsRevision = 922;
             }
+            if (Settings.SettingsRevision < 923)
+            {
+                // v0.9.23 removes the deferred start gate entirely. Keep the serialized
+                // field for old Settings.xml files, but it no longer controls playback.
+                Settings.EnableStartGate = false;
+                Settings.SettingsRevision = 923;
+            }
             if (Settings.TapPhaseIgnoreMs < 0f) Settings.TapPhaseIgnoreMs = 0f;
             if (Settings.TapPhaseIgnoreMs > 100f) Settings.TapPhaseIgnoreMs = 100f;
             if (Settings.TapPhaseMaxCorrectionPercent < 0.1f) Settings.TapPhaseMaxCorrectionPercent = 0.1f;
@@ -325,15 +332,6 @@ namespace Kiner.ADOFAIAudioSync
         {
             if (Settings == null) Settings = new AudioSyncSettings();
 
-            bool startGateWasEnabled = Settings.EnableStartGate;
-            Settings.EnableStartGate = GUILayout.Toggle(Settings.EnableStartGate,
-                "エディター側の全準備後まで scnGame.Play を保留する");
-            if (startGateWasEnabled != Settings.EnableStartGate)
-            {
-                AudioSyncRuntime.Reset(
-                    Settings.EnableStartGate ? "開始ゲートON" : "開始ゲートOFF",
-                    !Settings.EnableStartGate);
-            }
             GUILayout.Label(
                 "Ctrl+F9 診断表示: " +
                 (Settings.OverlayMode == 0
@@ -482,8 +480,6 @@ namespace Kiner.ADOFAIAudioSync
             GUILayout.Label("適用後のBPMは後続へ継続します。後端の復元SetSpeedは追加しません。");
 
             GUILayout.Space(10f);
-            if (GUILayout.Button("開始ゲート状態をリセット"))
-                AudioSyncRuntime.Reset("手動リセット");
             if (GUILayout.Button("BPM計測状態をリセット"))
                 TimingTrackerRuntime.ReloadForCurrentLevel();
         }

@@ -3,23 +3,24 @@ using UnityEngine;
 
 namespace Kiner.ADOFAIAudioSync.Runtime
 {
+    /// <summary>
+    /// Observes the stock editor-to-game playback path without delaying, suppressing,
+    /// or invoking scnGame.Play itself. Audio synchronization is handled independently
+    /// by the ScrubMusicToTime handshake.
+    /// </summary>
     internal static class AudioSyncRuntime
     {
-        private enum GateState
+        private enum StartState
         {
             Idle,
             EditorPreparing,
-            DeferredCaptured,
-            InvokingGamePlay,
+            GamePlayRunning,
             Running,
             Passthrough,
             Failed
         }
 
-        private static GateState state;
-        private static scnGame deferredGame;
-        private static int deferredCheckpoint;
-        private static bool deferredFlag;
+        private static StartState state;
         private static int playbackStartFloor;
         private static int playRequestFrame;
         private static double playRequestRealtime;
@@ -27,10 +28,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         private static double gamePlayCallMs;
         private static string status = "待機中";
         private static string lastError = string.Empty;
-        private static bool callCaptured;
-        private static bool invokingDeferredCall;
-        private static bool gatePatchInstalled;
-        private static int capturedPlayCallCount;
+        private static bool playCallObserved;
+        private static bool observationPatchInstalled;
+        private static int observedPlayCallCount;
 
         // Preserve the exact checkpoint chosen by ADOFAI. A chart may legitimately use floor
         // indices that are larger than an older copy of the same chart, so the mod must never
@@ -40,16 +40,15 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static bool Active
         {
-            get { return state != GateState.Idle; }
+            get { return state != StartState.Idle; }
         }
 
         internal static bool IsPreparing
         {
             get
             {
-                return state == GateState.EditorPreparing ||
-                       state == GateState.DeferredCaptured ||
-                       state == GateState.InvokingGamePlay;
+                return state == StartState.EditorPreparing ||
+                       state == StartState.GamePlayRunning;
             }
         }
 
@@ -59,9 +58,9 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static int PlayRequestFrame { get { return playRequestFrame; } }
         internal static double EditorPreparationMs { get { return editorPreparationMs; } }
         internal static double GamePlayCallMs { get { return gamePlayCallMs; } }
-        internal static bool CallCaptured { get { return callCaptured; } }
-        internal static bool GatePatchInstalled { get { return gatePatchInstalled; } }
-        internal static int CapturedPlayCallCount { get { return capturedPlayCallCount; } }
+        internal static bool CallCaptured { get { return playCallObserved; } }
+        internal static bool GatePatchInstalled { get { return observationPatchInstalled; } }
+        internal static int CapturedPlayCallCount { get { return observedPlayCallCount; } }
         internal static bool UsesFutureDspTime { get { return false; } }
         internal static int ActualPlaybackStartFloor { get { return actualPlaybackStartFloor; } }
         internal static string SameFloorTakeoffStatus { get { return sameFloorTakeoffStatus; } }
@@ -73,101 +72,82 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         internal static void SetGatePatchInstalled(bool installed)
         {
-            gatePatchInstalled = installed;
+            observationPatchInstalled = installed;
             if (!installed && Main.Logger != null)
             {
                 Main.Logger.Warning(
-                    "開始ゲートのHarmonyパッチを導入できませんでした。" +
-                    "BPM Tap Meterは動作しますが、再生開始は通常動作になります。");
+                    "再生開始の観測パッチを導入できませんでした。" +
+                    "再生処理は変更せず、途中再生handshakeは独立して動作します。");
             }
         }
 
         internal static void NotifyEditorPlayPrefix(scnEditor instance)
         {
-            CancelPending(false);
             int startFloor = ResolveStartFloor(instance);
             playbackStartFloor = Math.Max(0, startFloor);
             actualPlaybackStartFloor = playbackStartFloor;
             sameFloorTakeoffStatus = playbackStartFloor > 0
-                ? "選択床 " + playbackStartFloor + " を固定（本体指定待ち）"
+                ? "選択床 " + playbackStartFloor + "（本体checkpoint待ち）"
                 : "先頭再生";
             playRequestFrame = Time.frameCount;
             playRequestRealtime = Time.realtimeSinceStartupAsDouble;
             editorPreparationMs = 0d;
             gamePlayCallMs = 0d;
             lastError = string.Empty;
-            callCaptured = false;
-            capturedPlayCallCount = 0;
+            playCallObserved = false;
+            observedPlayCallCount = 0;
 
-            if (!Main.Enabled || Main.Settings == null || !Main.Settings.EnableStartGate || !gatePatchInstalled)
+            if (!Main.Enabled)
             {
-                state = GateState.Passthrough;
-                status = !gatePatchInstalled
-                    ? "開始ゲート未導入: 通常再生"
-                    : "開始ゲートOFF: 通常再生";
+                state = StartState.Passthrough;
+                status = "Mod無効: 本体再生";
                 return;
             }
 
-            state = GateState.EditorPreparing;
-            status = "タイル・イベント・アセットを準備中";
+            state = StartState.EditorPreparing;
+            status = "本体の再生開始を待機中（介入なし）";
         }
 
-        // Harmony Prefix for scnGame.Play(int, bool). Returning false suppresses the
-        // original call only while scnEditor.Play is still preparing the editor scene.
-        // The exact same call is executed from scnEditor.Play's Postfix. Do not move it
-        // to a later frame: ReloadAssets and Play are one atomic sequence in stock ADOFAI,
-        // and detaching Play lets floor objects/selection state change underneath it.
-        internal static bool ShouldRunGamePlayNow(scnGame game, ref int checkpoint, bool flag)
+        /// <summary>
+        /// Harmony Prefix observation for scnGame.Play(int, bool). This method deliberately
+        /// returns no bool and never changes checkpoint: the stock call must execute exactly
+        /// once so other Harmony Postfix patches also receive exactly one notification.
+        /// </summary>
+        internal static double NotifyGamePlayPrefix(int checkpoint)
         {
-            if (!invokingDeferredCall)
+            observedPlayCallCount++;
+            playCallObserved = true;
+            actualPlaybackStartFloor = Math.Max(0, checkpoint);
+
+            if (actualPlaybackStartFloor <= 0)
             {
-                // Diagnostic only. The stock checkpoint is intentionally left unchanged.
-                actualPlaybackStartFloor = Math.Max(0, checkpoint);
-                if (actualPlaybackStartFloor <= 0)
-                {
-                    sameFloorTakeoffStatus = "先頭再生";
-                }
-                else if (actualPlaybackStartFloor == playbackStartFloor)
-                {
-                    sameFloorTakeoffStatus = "床 " + actualPlaybackStartFloor +
-                                             " 固定 / ADOFAI本体の同一床内助走";
-                }
-                else
-                {
-                    sameFloorTakeoffStatus = "本体指定床 " + actualPlaybackStartFloor +
-                                             " を変更せず使用（選択床 " + playbackStartFloor + "）";
-                }
+                sameFloorTakeoffStatus = "先頭再生";
+            }
+            else if (actualPlaybackStartFloor == playbackStartFloor)
+            {
+                sameFloorTakeoffStatus = "床 " + actualPlaybackStartFloor +
+                                         " / ADOFAI本体の同一床内助走";
+            }
+            else
+            {
+                sameFloorTakeoffStatus = "本体指定床 " + actualPlaybackStartFloor +
+                                         " を変更せず使用（選択床 " + playbackStartFloor + "）";
             }
 
-            if (invokingDeferredCall || !Main.Enabled || Main.Settings == null ||
-                !Main.Settings.EnableStartGate || !gatePatchInstalled)
-            {
-                return true;
-            }
+            state = StartState.GamePlayRunning;
+            status = "scnGame.Play実行中（本体呼び出しを変更せず通過）";
+            return Time.realtimeSinceStartupAsDouble;
+        }
 
-            if (state != GateState.EditorPreparing && state != GateState.DeferredCaptured)
+        internal static void NotifyGamePlayPostfix(double startedRealtime)
+        {
+            if (startedRealtime > 0d)
             {
-                return true;
+                gamePlayCallMs =
+                    (Time.realtimeSinceStartupAsDouble - startedRealtime) * 1000d;
             }
-
-            capturedPlayCallCount++;
-            if (!callCaptured)
-            {
-                deferredGame = game;
-                deferredCheckpoint = checkpoint;
-                deferredFlag = flag;
-                callCaptured = true;
-                state = GateState.DeferredCaptured;
-                status = "ゲーム開始だけ保留中";
-            }
-            else if (Main.Logger != null && capturedPlayCallCount == 2)
-            {
-                Main.Logger.Warning(
-                    "1回のscnEditor.Play中にscnGame.Playが複数回呼ばれました。" +
-                    "最初の呼び出しだけを保留し、重複呼び出しは抑止します。");
-            }
-
-            return false;
+            state = StartState.Running;
+            status = "開始済み（scnGame.Play 1回・介入なし）";
         }
 
         internal static void NotifyEditorPlayPostfix()
@@ -178,27 +158,25 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                     (Time.realtimeSinceStartupAsDouble - playRequestRealtime) * 1000d;
             }
 
-            if (state == GateState.Passthrough)
+            if (state == StartState.Passthrough)
             {
-                status = "通常再生（ゲート未使用）";
                 return;
             }
 
-            if (!callCaptured || deferredGame == null)
+            if (!playCallObserved)
             {
-                Fail("scnGame.Play呼び出しを保留できませんでした。通常処理を変更していません。");
-                return;
+                // Diagnostics only: never turn a missing observation into a playback failure.
+                status = observationPatchInstalled
+                    ? "scnGame.Play未観測（本体処理には介入なし）"
+                    : "観測パッチ未導入（本体処理には介入なし）";
             }
-
-            InvokeDeferredGamePlay();
         }
 
         internal static Exception NotifyEditorPlayFinalizer(Exception exception)
         {
             if (exception != null)
             {
-                CancelPending(false);
-                state = GateState.Failed;
+                state = StartState.Failed;
                 lastError = exception.GetType().Name + ": " + exception.Message;
                 status = "エディター再生初期化で例外";
             }
@@ -213,8 +191,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
         internal static void NotifyPlaybackStopped(string reason)
         {
             CheckpointStartHandshakeRuntime.NotifyStop(reason);
-            CancelPending(false);
-            state = GateState.Idle;
+            state = StartState.Idle;
             status = "再生停止";
         }
 
@@ -223,25 +200,27 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             Reset(reason, false);
         }
 
+        // The second parameter is retained for source compatibility with v0.9.22 callers.
+        // There is no pending Play call to invoke in v0.9.23.
         internal static void Reset(string reason, bool invokePendingFallback)
         {
-            CancelPending(invokePendingFallback);
-            state = GateState.Idle;
+            state = StartState.Idle;
             status = reason ?? "待機中";
             lastError = string.Empty;
             editorPreparationMs = 0d;
             gamePlayCallMs = 0d;
             playbackStartFloor = 0;
             playRequestFrame = 0;
-            capturedPlayCallCount = 0;
+            playRequestRealtime = 0d;
+            observedPlayCallCount = 0;
+            playCallObserved = false;
             actualPlaybackStartFloor = 0;
             sameFloorTakeoffStatus = reason ?? "待機中";
         }
 
         internal static void Shutdown()
         {
-            CancelPending(false);
-            state = GateState.Idle;
+            state = StartState.Idle;
             status = "終了";
         }
 
@@ -267,91 +246,6 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             {
                 // Diagnostic-only value; never allow failure here to block normal playback.
                 return 0;
-            }
-        }
-
-        private static void InvokeDeferredGamePlay()
-        {
-            scnGame game = deferredGame;
-            int checkpoint = deferredCheckpoint;
-            bool flag = deferredFlag;
-
-            deferredGame = null;
-            callCaptured = false;
-
-            if (game == null)
-            {
-                Fail("保留したscnGameインスタンスがありません。");
-                return;
-            }
-
-            state = GateState.InvokingGamePlay;
-            status = "準備完了: 音源と譜面を通常開始";
-            double started = Time.realtimeSinceStartupAsDouble;
-            try
-            {
-                invokingDeferredCall = true;
-                game.Play(checkpoint, flag);
-                gamePlayCallMs =
-                    (Time.realtimeSinceStartupAsDouble - started) * 1000d;
-                state = GateState.Running;
-                status = "開始済み（本体の再生経路を変更せず使用）";
-            }
-            catch (Exception ex)
-            {
-                gamePlayCallMs =
-                    (Time.realtimeSinceStartupAsDouble - started) * 1000d;
-                Fail("保留したゲーム開始に失敗: " + ex.GetType().Name + ": " + ex.Message);
-                if (Main.Logger != null)
-                {
-                    Main.Logger.Error(ex.ToString());
-                }
-                throw;
-            }
-            finally
-            {
-                invokingDeferredCall = false;
-            }
-        }
-
-        private static void CancelPending(bool invokeFallback)
-        {
-            scnGame pending = deferredGame;
-            int checkpoint = deferredCheckpoint;
-            bool flag = deferredFlag;
-
-            deferredGame = null;
-            callCaptured = false;
-            capturedPlayCallCount = 0;
-
-            if (invokeFallback && pending != null)
-            {
-                try
-                {
-                    invokingDeferredCall = true;
-                    pending.Play(checkpoint, flag);
-                }
-                catch (Exception ex)
-                {
-                    lastError = "保留開始のフォールバックに失敗: " +
-                                ex.GetType().Name + ": " + ex.Message;
-                    if (Main.Logger != null) Main.Logger.Warning(lastError);
-                }
-                finally
-                {
-                    invokingDeferredCall = false;
-                }
-            }
-        }
-
-        private static void Fail(string message)
-        {
-            lastError = message ?? "不明なエラー";
-            status = "開始ゲート失敗";
-            state = GateState.Failed;
-            if (Main.Logger != null)
-            {
-                Main.Logger.Warning(lastError);
             }
         }
     }

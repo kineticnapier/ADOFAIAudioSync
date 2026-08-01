@@ -4,10 +4,10 @@ using Kiner.ADOFAIAudioSync.Runtime;
 
 namespace Kiner.ADOFAIAudioSync.Patches
 {
-    // Do not rewrite scnEditor.Play's IL. Modified ADOFAI builds often add their own
-    // transpilers, and stacking another transpiler can produce an invalid evaluation stack.
-    // Instead, mark the duration of scnEditor.Play and intercept scnGame.Play at its own
-    // method boundary while that duration is active.
+    // Observe the stock editor playback lifecycle without rewriting its IL or suppressing
+    // scnGame.Play. The latter is important because Harmony Postfix patches from other mods
+    // run even when an original is skipped; suppressing and manually reinvoking Play therefore
+    // exposes two lifecycle notifications for one editor start.
     [HarmonyPatch(typeof(scnEditor), "Play")]
     internal static class EditorPlayLifecyclePatch
     {
@@ -29,11 +29,16 @@ namespace Kiner.ADOFAIAudioSync.Patches
     }
 
     [HarmonyPatch(typeof(scnGame), "Play", new Type[] { typeof(int), typeof(bool) })]
-    internal static class GamePlayStartGatePatch
+    internal static class GamePlayStartObservationPatch
     {
-        private static bool Prefix(scnGame __instance, ref int __0, bool __1)
+        private static void Prefix(int __0, out double __state)
         {
-            return AudioSyncRuntime.ShouldRunGamePlayNow(__instance, ref __0, __1);
+            __state = AudioSyncRuntime.NotifyGamePlayPrefix(__0);
+        }
+
+        private static void Postfix(double __state)
+        {
+            AudioSyncRuntime.NotifyGamePlayPostfix(__state);
         }
     }
 
