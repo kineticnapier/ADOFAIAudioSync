@@ -1,13 +1,13 @@
-# v1.0.0 Release Verification
+# v1.0.1 Release Verification
 
-v1.0.0をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
+v1.0.1をReleaseビルドし、同じDLLで次を確認します。問題が出た場合は、ゲームログ、再現に使った音源形式、開始床、操作順を残します。
 
 ## Build and package
 
 - [ ] `build.ps1`のReleaseビルドが警告・エラーなしで完了する
-- [ ] `artifacts/ADOFAIAudioSync-v1.0.0.zip`が生成される
+- [ ] `artifacts/ADOFAIAudioSync-v1.0.1.zip`が生成される
 - [ ] ZIP内が`ADOFAIAudioSync/ADOFAIAudioSync.dll`と`ADOFAIAudioSync/Info.json`だけである
-- [ ] `Info.json`とオーバーレイの版が`1.0.0`で一致する
+- [ ] `Info.json`とオーバーレイの版が`1.0.1`で一致する
 - [ ] 旧`Settings.xml`を残した更新でも起動する
 
 ## Playback
@@ -37,6 +37,9 @@ v1.0.0をReleaseビルドし、同じDLLで次を確認します。問題が出�
 - [ ] OGGキャッシュOFFで本体読込へ戻る
 - [ ] キャッシュ消去後に件数と実際の参照が解放される
 - [ ] 容量超過時にLRU削除が働く
+- [ ] 上限未満のOGGはデコード前の推定後にキャッシュへ登録される
+- [ ] 単体で上限を超える長時間OGGはPCMへ全展開されず、本体のストリーミング読込で再生できる
+- [ ] 不完全または容量を判定できないOGGはキャッシュせず、本体のストリーミング読込へ戻る
 - [ ] `Ctrl+F9`の変更が再起動後も保存される
 - [ ] BPM・位相タップ計測、Take保存、適用、取消が動作する
 - [ ] 実験的プレイ誤差補正が既定OFFで、明示的にONにした場合だけ記録する
@@ -46,7 +49,7 @@ v1.0.0をReleaseビルドし、同じDLLで次を確認します。問題が出�
 途中再生が失敗した場合、次の区切りを含む範囲をそのまま保存します。
 
 ```text
-=== ADOFAI AudioSync v1.0.0 checkpoint schedule failure ===
+=== ADOFAI AudioSync v1.0.1 checkpoint schedule failure ===
 ...
 === end checkpoint schedule failure ===
 ```

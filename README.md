@@ -15,7 +15,7 @@ ADOFAIのエディター再生を安定させるUnity Mod Manager用Modです。
 - **Pause / Wait Beatsの分離**
   高BPM用の折りたたみ倍率をPauseイベントのWait Beatsへ適用するか選択できます。既定では通常の譜面速度を維持します。
 - **OGGメモリキャッシュ**
-  一度読み込んだOGG音源をデコード済みAudioClipとして再利用し、同じ譜面を途中再生するときの再デコードを減らします。容量上限、LRU削除、手動消去に対応します。
+  一度読み込んだOGG音源をデコード済みAudioClipとして再利用し、同じ譜面を途中再生するときの再デコードを減らします。デコード前にVorbisの総サンプル数からPCM容量を判定し、上限を超える音源はキャッシュせず本体のストリーミング読込へ戻します。容量上限、LRU削除、手動消去に対応します。
 - **BPM・位相タップアンカー**
   選択床を基準に曲へタップすると、タップ列からBPMと拍の位相を推定します。候補を確認し、SetSpeedイベントとして譜面へ適用できます。
 - **プレイ誤差からの速度補正（実験機能）**
@@ -103,10 +103,10 @@ $env:ADOFAI_GAME_MANAGED_DIR = "D:\SteamLibrary\steamapps\common\A Dance of Fire
 
 - 主な対象はエディター内の再生です。通常のレベルプレイの音声挙動を変更するModではありません。
 - 音源末端で2回のplayhead更新を確認できない場合は、危険なDSP予約を行わずゲーム本体のScrub処理へ戻します。
-- OGGキャッシュ容量はデコード後PCMの推定値です。Unity側の一時的なメモリ使用量までは含みません。
+- OGGキャッシュ容量はVorbisの総サンプル数から計算したデコード後PCM容量です。Unity側の一時的なメモリ使用量までは含みません。安全に容量を計算できないOGGはキャッシュ対象外になります。
 - 音声やエディター再生へ介入する別Modとの組み合わせは、個別に確認が必要です。
 
-1.0.0向けの回帰項目は[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)、変更履歴は[`CHANGELOG.md`](CHANGELOG.md)にあります。
+1.0.1向けの回帰項目は[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)、変更履歴は[`CHANGELOG.md`](CHANGELOG.md)にあります。
 
 ## License
 

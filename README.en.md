@@ -15,7 +15,7 @@ ADOFAI AudioSync is a Unity Mod Manager mod that stabilizes playback in the A Da
 - **Independent Pause / Wait Beats timing**
   You can choose whether the high-BPM countdown multiplier also affects Pause-event Wait Beats. By default, Wait Beats keep the chart's normal speed.
 - **OGG memory cache**
-  Previously loaded OGG files can be reused as decoded AudioClips, reducing repeated decoding when restarting the same chart. The cache supports a size limit, least-recently-used eviction, and manual clearing.
+  Previously loaded OGG files can be reused as decoded AudioClips, reducing repeated decoding when restarting the same chart. Before decoding, the mod derives the PCM size from the Vorbis sample count. Files that exceed the limit remain on ADOFAI's stock streaming path instead of being cached. The cache supports a size limit, least-recently-used eviction, and manual clearing.
 - **BPM and phase tap anchor**
   Select a floor and tap along with the music to estimate both BPM and beat phase. You can review the result and apply it to the chart as SetSpeed events.
 - **Play-error speed correction (experimental)**
@@ -103,7 +103,7 @@ To deploy to the local Mods directory while building:
 
 - The main target is editor playback. This mod does not change normal level-play audio behavior.
 - Near the end of an audio file, if two distinct playhead updates cannot be observed, the mod avoids a risky DSP reservation and falls back to the stock Scrub path.
-- OGG cache size is an estimate of decoded PCM data and does not include every temporary allocation made by Unity.
+- OGG cache size is the decoded PCM size calculated from the Vorbis sample count and does not include every temporary allocation made by Unity. An OGG whose size cannot be calculated safely is not cached.
 - Compatibility with other mods that patch audio or editor playback must be checked individually.
 
 See [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for release regression checks and [`CHANGELOG.md`](CHANGELOG.md) for version history.

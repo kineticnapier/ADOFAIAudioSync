@@ -15,7 +15,7 @@ ADOFAI AudioSync는 A Dance of Fire and Ice 에디터의 재생을 안정화하�
 - **Pause / Wait Beats 타이밍 분리**
   고BPM 카운트다운 배율을 Pause 이벤트의 Wait Beats에도 적용할지 선택할 수 있습니다. 기본값에서는 Wait Beats가 채보의 원래 속도를 유지합니다.
 - **OGG 메모리 캐시**
-  이전에 불러온 OGG 파일을 디코딩된 AudioClip으로 재사용하여 같은 채보를 다시 중간 재생할 때 반복 디코딩을 줄입니다. 용량 제한, LRU 제거, 수동 삭제를 지원합니다.
+  이전에 불러온 OGG 파일을 디코딩된 AudioClip으로 재사용하여 같은 채보를 다시 중간 재생할 때 반복 디코딩을 줄입니다. 디코딩 전에 Vorbis의 전체 샘플 수로 PCM 크기를 계산하며, 제한을 초과하는 파일은 캐시하지 않고 ADOFAI의 기본 스트리밍 경로로 불러옵니다. 용량 제한, LRU 제거, 수동 삭제를 지원합니다.
 - **BPM·위상 탭 앵커**
   타일을 선택하고 음악에 맞춰 탭하면 BPM과 박자의 위상을 함께 추정합니다. 결과를 확인한 뒤 SetSpeed 이벤트로 채보에 적용할 수 있습니다.
 - **플레이 오차 기반 속도 보정(실험적 기능)**
@@ -103,7 +103,7 @@ $env:ADOFAI_GAME_MANAGED_DIR = "D:\SteamLibrary\steamapps\common\A Dance of Fire
 
 - 주 대상은 에디터 재생입니다. 이 모드는 일반 레벨 플레이의 오디오 동작을 변경하지 않습니다.
 - 오디오 파일 끝부분에서 서로 다른 재생 헤드 업데이트를 두 번 확인할 수 없으면, 위험한 DSP 예약을 피하고 기본 Scrub 처리로 돌아갑니다.
-- OGG 캐시 크기는 디코딩된 PCM 데이터의 추정치이며 Unity가 만드는 모든 임시 메모리 할당을 포함하지 않습니다.
+- OGG 캐시 크기는 Vorbis의 전체 샘플 수로 계산한 디코딩 후 PCM 크기이며 Unity가 만드는 모든 임시 메모리 할당을 포함하지 않습니다. 크기를 안전하게 계산할 수 없는 OGG는 캐시하지 않습니다.
 - 오디오 또는 에디터 재생을 패치하는 다른 모드와의 호환성은 개별적으로 확인해야 합니다.
 
 릴리스 회귀 검사 항목은 [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md), 버전 변경 내역은 [`CHANGELOG.md`](CHANGELOG.md)에서 확인할 수 있습니다.
