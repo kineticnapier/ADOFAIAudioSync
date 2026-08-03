@@ -231,7 +231,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                         manager.audioLib.Remove(conductorName);
                     }
 
-                    long estimatedDecodedBytes;
+                    long estimatedDecodedBytes = 0L;
                     cacheEligible = streamOverridePatchInstalled &&
                         TryPrepareMemoryLoad(canonicalPath, out estimatedDecodedBytes);
                     if (cacheEligible)
