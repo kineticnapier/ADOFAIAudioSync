@@ -154,14 +154,17 @@ namespace Kiner.ADOFAIAudioSync.Patches
         }
     }
 
-    [HarmonyPatch(typeof(AudioManager), "FindOrLoadAudioClipExternal",
-        new Type[] { typeof(string), typeof(bool), typeof(float) })]
+    [HarmonyPatch]
     internal static class ExternalOggCachePatch
     {
-        private static bool Prepare()
+        private static MethodBase TargetMethod()
         {
+            // v3.3.1 added the optional `stream` argument. Prefer that overload while
+            // retaining the v2.9.x target so one source tree supports both versions.
             return AccessTools.Method(typeof(AudioManager), "FindOrLoadAudioClipExternal",
-                new Type[] { typeof(string), typeof(bool), typeof(float) }) != null;
+                       new Type[] { typeof(string), typeof(bool), typeof(float), typeof(bool) }) ??
+                   AccessTools.Method(typeof(AudioManager), "FindOrLoadAudioClipExternal",
+                       new Type[] { typeof(string), typeof(bool), typeof(float) });
         }
 
         private static void Postfix(
