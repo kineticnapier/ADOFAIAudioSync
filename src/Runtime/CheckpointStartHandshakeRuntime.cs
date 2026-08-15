@@ -163,7 +163,7 @@ namespace Kiner.ADOFAIAudioSync.Runtime
                 // AudioSource reservation is pending. This is also what Checkpoint_Enter
                 // observes immediately after ScrubMusicToTime returns.
                 PinChartAtRequestedLogical(instance, instance.dspTime);
-                instance.lastHit = newTime;
+                GameVersionCompat.SetLastHit(instance, newTime);
 
                 generation++;
                 int token = generation;

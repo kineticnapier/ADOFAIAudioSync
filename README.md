@@ -25,7 +25,7 @@ ADOFAIのエディター再生を安定させるUnity Mod Manager用Modです。
 
 ## 対応環境
 
-- Windows版 A Dance of Fire and Ice
+- Windows版 A Dance of Fire and Ice v3.3.1
 - Unity Mod Manager
 - ゲーム本体のMono/Managed DLLを参照できる環境
 
@@ -106,7 +106,7 @@ $env:ADOFAI_GAME_MANAGED_DIR = "D:\SteamLibrary\steamapps\common\A Dance of Fire
 - OGGキャッシュ容量はVorbisの総サンプル数から計算したデコード後PCM容量です。Unity側の一時的なメモリ使用量までは含みません。安全に容量を計算できないOGGはキャッシュ対象外になります。
 - 音声やエディター再生へ介入する別Modとの組み合わせは、個別に確認が必要です。
 
-1.0.1向けの回帰項目は[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)、変更履歴は[`CHANGELOG.md`](CHANGELOG.md)にあります。
+1.0.2向けの回帰項目は[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)、変更履歴は[`CHANGELOG.md`](CHANGELOG.md)にあります。
 
 ## License
 

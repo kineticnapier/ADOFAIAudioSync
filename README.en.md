@@ -25,7 +25,7 @@ ADOFAI AudioSync is a Unity Mod Manager mod that stabilizes playback in the A Da
 
 ## Requirements
 
-- Windows version of A Dance of Fire and Ice
+- Windows version of A Dance of Fire and Ice v3.3.1
 - Unity Mod Manager
 - A build environment that can reference the game's Mono/Managed DLLs
 

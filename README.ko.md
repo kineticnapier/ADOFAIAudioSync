@@ -25,7 +25,7 @@ ADOFAI AudioSync는 A Dance of Fire and Ice 에디터의 재생을 안정화하�
 
 ## 요구 사항
 
-- Windows 버전 A Dance of Fire and Ice
+- Windows 버전 A Dance of Fire and Ice v3.3.1
 - Unity Mod Manager
 - 게임의 Mono/Managed DLL을 참조할 수 있는 빌드 환경
 
