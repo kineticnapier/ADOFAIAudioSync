@@ -9,6 +9,7 @@
 - ADOFAI v3.3.1で`AudioManager.FindOrLoadAudioClipExternal`へ追加された`stream`引数に対応
 - `scrConductor.lastHit`から各`ADOBase.playerManager`配下の`scrPlayer.lastHit`へ移動した途中再生状態を、旧版との互換性を保ちながら更新
 - v3.3.1で`protected`になった`LevelEvent.data`を、旧版と共通の互換アクセサー経由で読み取るよう変更
+- Windows PowerShell 5.1でZIP作成時に`ZipArchiveMode`を解決できない問題を修正
 
 ### Verified
 

@@ -173,10 +173,18 @@ function Write-ModInfo {
     )
 }
 
+function Import-ZipAssemblies {
+    # Windows PowerShell 5.1 does not always load System.IO.Compression when
+    # System.IO.Compression.FileSystem is requested. ZipArchiveMode and
+    # CompressionLevel live in the former assembly.
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+}
+
 function Assert-PackageContents {
     param([string]$ZipPath)
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Import-ZipAssemblies
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $required = @(
@@ -222,7 +230,7 @@ function New-UMMPackage {
         [string]$ZipPath
     )
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Import-ZipAssemblies
     $archive = [System.IO.Compression.ZipFile]::Open(
         $ZipPath,
         [System.IO.Compression.ZipArchiveMode]::Create
