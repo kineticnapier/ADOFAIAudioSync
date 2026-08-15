@@ -8,10 +8,12 @@
 
 - ADOFAI v3.3.1で`AudioManager.FindOrLoadAudioClipExternal`へ追加された`stream`引数に対応
 - `scrConductor.lastHit`から各`ADOBase.playerManager`配下の`scrPlayer.lastHit`へ移動した途中再生状態を、旧版との互換性を保ちながら更新
+- v3.3.1で`protected`になった`LevelEvent.data`を、旧版と共通の互換アクセサー経由で読み取るよう変更
 
 ### Verified
 
 - v3.3.1のManaged DLLに対してHarmony対象、直接参照、OGG iterator、`Scrub`／`PlayHitTimes`のtranspiler前提を静的検証
+- v3.3.1と旧版のManaged DLLに対してReleaseビルドが成功することを確認
 
 ## [1.0.1] - 2026-08-03
 

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using ADOFAI;
 using HarmonyLib;
+using Kiner.ADOFAIAudioSync.Runtime;
 using UnityEngine;
 
 namespace Kiner.ADOFAIAudioSync.Timing
@@ -1149,7 +1150,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
         {
             if (e == null) return false;
             object value;
-            if (!e.data.TryGetValue("angleOffset", out value)) return true;
+            if (!e.GetEventData().TryGetValue("angleOffset", out value)) return true;
             try
             {
                 return Math.Abs(Convert.ToDouble(value, CultureInfo.InvariantCulture)) < 0.0001d;

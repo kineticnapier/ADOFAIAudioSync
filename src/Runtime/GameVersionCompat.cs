@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using LevelEvent = ADOFAI.LevelEvent;
 
 namespace Kiner.ADOFAIAudioSync.Runtime
 {
@@ -19,6 +21,10 @@ namespace Kiner.ADOFAIAudioSync.Runtime
 
         private static readonly FieldInfo ConductorLastHitField =
             AccessTools.Field(typeof(scrConductor), "lastHit");
+
+        private static readonly AccessTools.FieldRef<LevelEvent, Dictionary<string, object>>
+            EventDataRef = AccessTools.FieldRefAccess<LevelEvent, Dictionary<string, object>>(
+                "data");
 
         private static readonly PropertyInfo PlayerManagerProperty =
             typeof(ADOBase).GetProperty("playerManager", StaticMembers);
@@ -42,6 +48,16 @@ namespace Kiner.ADOFAIAudioSync.Runtime
             : AccessTools.Field(PlayerType, "lastHit");
 
         private static bool warningLogged;
+
+        internal static IDictionary<string, object> GetEventData(this LevelEvent source)
+        {
+            if (source == null)
+            {
+                throw new ArgumentNullException("source");
+            }
+
+            return EventDataRef(source);
+        }
 
         internal static void SetLastHit(scrConductor instance, double value)
         {

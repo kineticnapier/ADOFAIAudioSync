@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using ADOFAI;
 using HarmonyLib;
+using Kiner.ADOFAIAudioSync.Runtime;
 using UnityEngine;
 
 namespace Kiner.ADOFAIAudioSync.Timing
@@ -1070,7 +1071,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             try
             {
                 object value;
-                if (speed.data.TryGetValue("speedType", out value))
+                if (speed.GetEventData().TryGetValue("speedType", out value))
                 {
                     if (value is SpeedType) return (SpeedType)value;
                     SpeedType parsed;
@@ -1088,7 +1089,7 @@ namespace Kiner.ADOFAIAudioSync.Timing
             try
             {
                 object value;
-                if (levelEvent.data.TryGetValue(key, out value))
+                if (levelEvent.GetEventData().TryGetValue(key, out value))
                     return Convert.ToDouble(value, CultureInfo.InvariantCulture);
             }
             catch { }
