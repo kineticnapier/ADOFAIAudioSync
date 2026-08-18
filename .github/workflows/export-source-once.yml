@@ -1,9 +1,9 @@
 name: Export source once
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - build/source-export
 
 permissions:
   contents: write
