@@ -1,0 +1,20 @@
+name: Export source once
+
+on:
+  push:
+    branches:
+      - build/source-export
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive source
+        run: |
+          tar -czf /tmp/ADOFAIAudioSync-source.tar.gz --exclude=.git .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ADOFAIAudioSync-source
+          path: /tmp/ADOFAIAudioSync-source.tar.gz
+          if-no-files-found: error
