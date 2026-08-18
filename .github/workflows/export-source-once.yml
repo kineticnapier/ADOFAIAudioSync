@@ -18,3 +18,18 @@ jobs:
           name: ADOFAIAudioSync-source
           path: /tmp/ADOFAIAudioSync-source.tar.gz
           if-no-files-found: error
+
+  export-net48-refs:
+    runs-on: windows-latest
+    steps:
+      - name: Stage .NET Framework 4.8 reference assemblies
+        shell: pwsh
+        run: |
+          $src = Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8'
+          if (-not (Test-Path -LiteralPath $src)) { throw "v4.8 reference assemblies not found: $src" }
+          Compress-Archive -Path (Join-Path $src '*') -DestinationPath "$env:RUNNER_TEMP\net48-reference-assemblies.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: net48-reference-assemblies
+          path: ${{ runner.temp }}\net48-reference-assemblies.zip
+          if-no-files-found: error
