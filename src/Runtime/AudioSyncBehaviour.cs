@@ -4,7 +4,6 @@ using UnityEngine;
 
 namespace Kiner.ADOFAIAudioSync.Runtime
 {
-    [DefaultExecutionOrder(10000)]
     public sealed class AudioSyncBehaviour : MonoBehaviour
     {
         private float largestHitchMs;
