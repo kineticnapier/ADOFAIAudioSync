@@ -1,9 +1,9 @@
 name: Export source once
 
 on:
-  push:
+  pull_request:
     branches:
-      - build/source-export
+      - main
 
 jobs:
   export:
