@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -55,3 +58,105 @@ jobs:
           name: harmony-ref
           path: ${{ runner.temp }}\harmony-ref\0Harmony.dll
           if-no-files-found: error
+
+  push-clean-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Replace frame caps with DSP-buffer timeout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "6ad46ee15f90fc30239fd1357f1f67ce7cedd7ab"
+          git show 3f877465a70fb7f45782283eb54699449a692f8c:src/Patches/CheckpointStartHandshakePatches.cs > src/Patches/CheckpointStartHandshakePatches.cs
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/Runtime/CheckpointStartHandshakeRuntime.cs')
+          s = p.read_text()
+          old_resume = '''                    int resumeFrames = 0;
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= pausedDsp + 0.000001d &&
+                           resumeFrames < 12)
+'''
+          new_resume = '''                    int resumeFrames = 0;
+                    double resumeDeadline =
+                        resumeStartedRealtime + GetDspAdvanceTimeoutSeconds();
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= pausedDsp + 0.000001d &&
+                           Time.realtimeSinceStartupAsDouble < resumeDeadline)
+'''
+          old_stop = '''                    double stopDsp = AudioSettings.dspTime;
+                    int stopFrames = 0;
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= stopDsp + 0.000001d &&
+                           stopFrames < 12)
+'''
+          new_stop = '''                    double stopDsp = AudioSettings.dspTime;
+                    double stopStartedRealtime = Time.realtimeSinceStartupAsDouble;
+                    double stopDeadline =
+                        stopStartedRealtime + GetDspAdvanceTimeoutSeconds();
+                    int stopFrames = 0;
+                    while (TokenIsCurrent(token) &&
+                           IsSessionValid() &&
+                           state == HandshakeState.Priming &&
+                           AudioSettings.dspTime <= stopDsp + 0.000001d &&
+                           Time.realtimeSinceStartupAsDouble < stopDeadline)
+'''
+          marker = '''        private static double GetTimeoutSeconds()
+'''
+          helper = '''        private static double GetDspAdvanceTimeoutSeconds()
+        {
+            int dspBufferLength = 1024;
+            try
+            {
+                int dspBufferCount;
+                AudioSettings.GetDSPBufferSize(out dspBufferLength, out dspBufferCount);
+            }
+            catch
+            {
+                dspBufferLength = 1024;
+            }
+
+            int outputRate = Math.Max(1, AudioSettings.outputSampleRate);
+            double bufferSeconds =
+                (double)Math.Max(1, dspBufferLength) / outputRate;
+
+            // A render-frame cap can expire before one audio update at high FPS.
+            // Give the audio thread three complete DSP buffers, with sane bounds for
+            // unusual device configurations.
+            return Math.Max(0.1d, Math.Min(0.5d, bufferSeconds * 3d));
+        }
+
+'''
+          if s.count(old_resume) != 1:
+              raise SystemExit('resume frame-cap block did not match exactly once')
+          if s.count(old_stop) != 1:
+              raise SystemExit('stop frame-cap block did not match exactly once')
+          if s.count(marker) != 1:
+              raise SystemExit('timeout helper insertion point did not match exactly once')
+          s = s.replace(old_resume, new_resume, 1)
+          s = s.replace(old_stop, new_stop, 1)
+          s = s.replace(marker, helper + marker, 1)
+          p.write_text(s)
+          PY
+          printf '%s  %s\n' 'ba47117b1f799dc8f187a25d2afeb431038d696a8dea239d4ad93cf795dd0d7a' 'src/Runtime/CheckpointStartHandshakeRuntime.cs' | sha256sum -c -
+          printf '%s  %s\n' 'a6e261aab50d9d7360c2e6ad8f079f644ec88df5d65228708523c1057eed9a75' 'src/Patches/CheckpointStartHandshakePatches.cs' | sha256sum -c -
+      - name: Commit verified direct fix to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Kinetic Napier'
+          git config user.email 'u61819269@gmail.com'
+          git add src/Runtime/CheckpointStartHandshakeRuntime.cs src/Patches/CheckpointStartHandshakePatches.cs
+          git diff --cached --check
+          git commit -m 'Use DSP-buffer timeout for checkpoint waits'
+          git push origin HEAD:main
