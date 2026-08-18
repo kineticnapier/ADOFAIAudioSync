@@ -33,3 +33,28 @@ jobs:
           name: net48-reference-assemblies
           path: ${{ runner.temp }}\net48-reference-assemblies.zip
           if-no-files-found: error
+
+  export-umm-harmony:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: newman55/unity-mod-manager
+          ref: master
+          path: umm
+      - name: Build UnityModManager 0.32.5
+        shell: pwsh
+        run: |
+          dotnet build .\umm\UnityModManager.sln -c Release
+          $umm = Get-ChildItem .\umm -Recurse -Filter UnityModManager.dll | Where-Object { $_.FullName -match '\\bin\\Release\\' } | Select-Object -First 1
+          $harmony = Get-ChildItem "$env:USERPROFILE\.nuget\packages\lib.harmony\2.3.6" -Recurse -Filter 0Harmony.dll | Where-Object { $_.FullName -match 'net4' } | Select-Object -First 1
+          if ($null -eq $umm) { throw 'UnityModManager.dll was not built' }
+          if ($null -eq $harmony) { throw '0Harmony.dll was not found' }
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\umm-refs" | Out-Null
+          Copy-Item $umm.FullName "$env:RUNNER_TEMP\umm-refs\UnityModManager.dll"
+          Copy-Item $harmony.FullName "$env:RUNNER_TEMP\umm-refs\0Harmony.dll"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umm-harmony-refs
+          path: ${{ runner.temp }}\umm-refs\*.dll
+          if-no-files-found: error
