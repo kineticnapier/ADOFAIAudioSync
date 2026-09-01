@@ -14,6 +14,7 @@ namespace Kiner.ADOFAIAudioSync.Patches
         private static bool Prepare()
         {
             CheckpointDspWaitCompatibilityPatch.Install();
+            CheckpointResidualSafetyPatch.Install();
             return AccessTools.Method(typeof(scrConductor), "ScrubMusicToTime", new Type[] { typeof(double) }) != null;
         }
 
@@ -202,6 +203,211 @@ namespace Kiner.ADOFAIAudioSync.Patches
 
             int frames = (int)Math.Ceiling(waitSeconds / frameSeconds) + 2;
             return Math.Max(12, Math.Min(30000, frames));
+        }
+    }
+
+    /// <summary>
+    /// Protects the checkpoint handshake from treating a whole DSP-buffer observation jump
+    /// as a real chart/audio offset. A 2048-sample buffer at 48 kHz is 42.7 ms, matching the
+    /// rare fixed residual seen when AudioSource.timeSamples is published one buffer ahead.
+    ///
+    /// Buffer-sized residuals are forced through the existing retry path even when the user
+    /// configured a wider residual limit. If every retry still lands on a buffer boundary,
+    /// the final fallback keeps the known PlayScheduled origin instead of writing that
+    /// suspicious timeSamples observation into dspTimeSong.
+    /// </summary>
+    internal static class CheckpointResidualSafetyPatch
+    {
+        private const string HarmonyId =
+            "Kiner.ADOFAIAudioSync.CheckpointResidualSafety";
+
+        private static readonly FieldInfo LastScheduleResidualMsField =
+            AccessTools.Field(typeof(CheckpointStartHandshakeRuntime), "lastScheduleResidualMs");
+        private static readonly FieldInfo LastExpectedSampleField =
+            AccessTools.Field(typeof(CheckpointStartHandshakeRuntime), "lastExpectedSample");
+        private static readonly FieldInfo StatusField =
+            AccessTools.Field(typeof(CheckpointStartHandshakeRuntime), "status");
+
+        private static bool installed;
+        private static bool replacedFallbackSample;
+        private static double replacedResidualMs;
+        private static double replacedBufferMs;
+
+        internal static void Install()
+        {
+            if (installed) return;
+
+            try
+            {
+                MethodBase limitTarget = AccessTools.Method(
+                    typeof(CheckpointStartHandshakeRuntime),
+                    "GetMaxScheduleResidualMs");
+                MethodBase alignTarget = AccessTools.Method(
+                    typeof(CheckpointStartHandshakeRuntime),
+                    "AlignAndRelease");
+                MethodInfo limitPostfix = AccessTools.Method(
+                    typeof(CheckpointResidualSafetyPatch),
+                    "ResidualLimitPostfix");
+                MethodInfo alignPrefix = AccessTools.Method(
+                    typeof(CheckpointResidualSafetyPatch),
+                    "AlignPrefix");
+                MethodInfo alignPostfix = AccessTools.Method(
+                    typeof(CheckpointResidualSafetyPatch),
+                    "AlignPostfix");
+
+                if (limitTarget == null || alignTarget == null || limitPostfix == null ||
+                    alignPrefix == null || alignPostfix == null ||
+                    LastScheduleResidualMsField == null || LastExpectedSampleField == null)
+                {
+                    if (Main.Logger != null)
+                    {
+                        Main.Logger.Warning(
+                            "Checkpoint residual safety patch target was not found.");
+                    }
+                    return;
+                }
+
+                Harmony harmony = new Harmony(HarmonyId);
+                harmony.Patch(
+                    limitTarget,
+                    postfix: new HarmonyMethod(limitPostfix));
+                harmony.Patch(
+                    alignTarget,
+                    prefix: new HarmonyMethod(alignPrefix),
+                    postfix: new HarmonyMethod(alignPostfix));
+                installed = true;
+
+                if (Main.Logger != null)
+                {
+                    Main.Logger.Log(
+                        "Checkpoint residual safety now rejects DSP-buffer-sized playhead jumps.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Main.Logger != null)
+                {
+                    Main.Logger.Warning(
+                        "Checkpoint residual safety patch failed: " + ex);
+                }
+            }
+        }
+
+        private static void ResidualLimitPostfix(ref double __result)
+        {
+            double bufferMs = GetDspBufferMilliseconds();
+            if (!IsFinite(bufferMs) || bufferMs <= 0d) return;
+
+            // Leave ordinary small residual handling untouched, but make one full output
+            // buffer unambiguously exceed the acceptance limit. 90% leaves room for the
+            // small dspTime/timeSamples sampling jitter around a buffer boundary.
+            double bufferSafeLimitMs = Math.Max(5d, bufferMs * 0.9d);
+            __result = Math.Min(__result, bufferSafeLimitMs);
+        }
+
+        private static void AlignPrefix(double __1, ref int __2, bool __3)
+        {
+            replacedFallbackSample = false;
+            if (!__3) return;
+
+            double residualMs = ReadDoubleField(LastScheduleResidualMsField);
+            double expectedSample = ReadDoubleField(LastExpectedSampleField);
+            double bufferMs = GetDspBufferMilliseconds();
+            if (!IsFinite(residualMs) || !IsFinite(expectedSample) ||
+                !IsLikelyBufferQuantizedResidual(residualMs, bufferMs))
+            {
+                return;
+            }
+
+            __2 = (int)Math.Round(expectedSample);
+            replacedFallbackSample = true;
+            replacedResidualMs = residualMs;
+            replacedBufferMs = bufferMs;
+        }
+
+        private static void AlignPostfix()
+        {
+            if (!replacedFallbackSample) return;
+
+            replacedFallbackSample = false;
+            try
+            {
+                if (StatusField != null)
+                {
+                    StatusField.SetValue(
+                        null,
+                        "途中再生: DSPバッファ境界残差を無視して予約時刻を維持");
+                }
+            }
+            catch
+            {
+                // Status text is diagnostic only.
+            }
+
+            if (Main.Logger != null)
+            {
+                Main.Logger.Warning(
+                    "Ignored a DSP-buffer-quantized checkpoint residual after retries: " +
+                    replacedResidualMs.ToString("+0.0;-0.0;0.0") + " ms" +
+                    " (buffer " + replacedBufferMs.ToString("0.0") +
+                    " ms); kept the PlayScheduled origin.");
+            }
+        }
+
+        private static bool IsLikelyBufferQuantizedResidual(
+            double residualMs,
+            double bufferMs)
+        {
+            if (!IsFinite(residualMs) || !IsFinite(bufferMs) || bufferMs <= 0d)
+            {
+                return false;
+            }
+
+            double absoluteMs = Math.Abs(residualMs);
+            if (absoluteMs < bufferMs * 0.5d) return false;
+
+            int multiple = Math.Max(1, (int)Math.Round(absoluteMs / bufferMs));
+            if (multiple > 4) return false;
+
+            double targetMs = multiple * bufferMs;
+            double toleranceMs = Math.Max(1.5d, bufferMs * 0.08d);
+            return Math.Abs(absoluteMs - targetMs) <= toleranceMs;
+        }
+
+        private static double GetDspBufferMilliseconds()
+        {
+            int dspBufferLength = 1024;
+            try
+            {
+                int dspBufferCount;
+                AudioSettings.GetDSPBufferSize(out dspBufferLength, out dspBufferCount);
+            }
+            catch
+            {
+                dspBufferLength = 1024;
+            }
+
+            int sampleRate = Math.Max(1, AudioSettings.outputSampleRate);
+            return (double)Math.Max(1, dspBufferLength) / sampleRate * 1000d;
+        }
+
+        private static double ReadDoubleField(FieldInfo field)
+        {
+            try
+            {
+                if (field == null) return double.NaN;
+                object value = field.GetValue(null);
+                return value is double ? (double)value : double.NaN;
+            }
+            catch
+            {
+                return double.NaN;
+            }
+        }
+
+        private static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
     }
 }
